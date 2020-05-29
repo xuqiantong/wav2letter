@@ -143,10 +143,10 @@ void dirCreate(const std::string& path) {
 #else
   nError = mkdir(path.c_str(), nMode);
 #endif
-  if (nError != 0) {
-    throw std::runtime_error(
-        std::string() + "Unable to create directory - " + path);
-  }
+  // if (nError != 0) {
+  //   throw std::runtime_error(
+  //       std::string() + "Unable to create directory - " + path);
+  // }
 }
 
 bool fileExists(const std::string& path) {
