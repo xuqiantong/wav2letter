@@ -55,18 +55,18 @@ std::vector<std::string> wrd2Target(
 
   std::vector<std::string> res;
   if (fallback2Ltr) {
-    std::cerr
-        << "Falling back to using letters as targets for the unknown word: "
-        << word << "\n";
+    // std::cerr
+    //     << "Falling back to using letters as targets for the unknown word: "
+    //     << word << "\n";
     auto tokens = splitWrd(word);
     for (const auto& tkn : tokens) {
       if (dict.contains(tkn)) {
         res.push_back(tkn);
       } else if (skipUnk) {
-        std::cerr
-            << "Skipping unknown token '" << tkn
-            << "' when falling back to letter target for the unknown word: "
-            << word << "\n";
+        // std::cerr
+        //     << "Skipping unknown token '" << tkn
+        //     << "' when falling back to letter target for the unknown word: "
+        //     << word << "\n";
       } else {
         throw std::invalid_argument(
             "Unknown token '" + tkn +
@@ -75,8 +75,8 @@ std::vector<std::string> wrd2Target(
       }
     }
   } else if (skipUnk) {
-    std::cerr << "Skipping unknown word '" << word
-              << "' when generating target\n";
+    // std::cerr << "Skipping unknown word '" << word
+    //           << "' when generating target\n";
   } else {
     throw std::invalid_argument("Unknown word in the lexicon: " + word);
   }
