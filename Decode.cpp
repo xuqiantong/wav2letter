@@ -37,6 +37,105 @@
 
 using namespace w2l;
 
+Dictionary createDictionary() {
+  Dictionary dictionary;
+
+  dictionary.addEntry("<FL_DICT>");
+  dictionary.addEntry("<PAD>");
+  dictionary.addEntry("<EOS>");
+  dictionary.addEntry("<UNK>");
+
+  dictionary.setDefaultIndex(3);
+
+  std::ifstream file(FLAGS_lm_vocab);
+  if (!file.is_open()) {
+    throw std::runtime_error(
+        "failed to open file for reading: " + FLAGS_lexicon);
+  }
+  std::string line;
+  while (std::getline(file, line)) {
+    if (line.empty()) {
+      continue;
+    }
+    auto tkns = splitOnWhitespace(line, true);
+    dictionary.addEntry(tkns.front());
+  }
+  if (!dictionary.isContiguous()) {
+    throw std::runtime_error("Invalid dictionary format - not contiguous");
+  }
+
+  return dictionary;
+}
+
+std::vector<float> getLmScore(
+    const std::vector<std::vector<std::string>>& sentences,
+    std::shared_ptr<fl::Module> lm,
+    std::shared_ptr<fl::Module> criterion,
+    const Dictionary& dict) {
+  int64_t length = 0, batchsize = sentences.size();
+  for (const auto& sentence : sentences) {
+    length = std::max<int64_t>(length, sentence.size());
+  }
+  std::vector<int> batch(batchsize * (length + 2), 1); // pad
+  for (int64_t s = 0; s < batchsize; ++s) {
+    int64_t start = s * (length + 2);
+    batch[start] = 2; // eos
+    auto indices = dict.mapEntriesToIndices(sentences[s]);
+    for (int i = 0; i < indices.size(); ++i) {
+      batch[start + i + 1] = indices[i];
+    }
+    batch[start + indices.size() + 1] = 2; // eos
+  }
+  af::array arr(length + 2, batchsize, batch.data());
+  af::array iarr = arr(af::seq(0, length), af::span);
+  af::array tarr = arr(af::seq(1, length + 1), af::span);
+
+  auto input = fl::Variable(iarr, false);
+  auto target = fl::Variable(tarr, false);
+
+  auto output = lm->forward({input}).front();
+  auto loss = criterion->forward({output, target}).front();
+  // af_print(loss.array());
+  loss = sum(loss, {0});
+  return afToVector<float>(-loss.array());
+}
+
+void rerank_beam(
+    std::vector<DecodeResult>& beam,
+    std::shared_ptr<fl::Module> lm,
+    std::shared_ptr<fl::Module> criterion,
+    const Dictionary& decoderDict,
+    const Dictionary& trDict) {
+  int nSamples = std::min((int)FLAGS_tr_nbest, (int)beam.size());
+  for (int i = 0; i < nSamples; i += FLAGS_tr_batchsize) {
+    int batchsize = std::min((int)nSamples - i, (int)FLAGS_tr_batchsize);
+    std::vector<std::vector<std::string>> batch;
+    for (int j = i; j < i + batchsize; j++) {
+      auto rawWordPrediction = beam[j].words;
+      rawWordPrediction =
+          validateIdx(rawWordPrediction, decoderDict.getIndex(kUnkToken));
+      auto wordPrediction = wrdIdx2Wrd(rawWordPrediction, decoderDict);
+      batch.push_back(wordPrediction);
+      beam[j].score = wordPrediction.size(); // TODO: letter length
+    }
+    auto lm_scores = getLmScore(batch, lm, criterion, trDict);
+    for (int j = i; j < i + batchsize; j++) {
+      beam[j].lmScore = lm_scores[j - i];
+    }
+  }
+
+  std::sort(
+      beam.begin(),
+      beam.begin() + nSamples,
+      [](const DecodeResult& p1, const DecodeResult& p2) {
+        double score1 = p1.amScore + FLAGS_tr_lmwight * p1.lmScore +
+            FLAGS_tr_wordscore * p1.score;
+        double score2 = p2.amScore + FLAGS_tr_lmwight * p2.lmScore +
+            FLAGS_tr_wordscore * p2.score;
+        return score1 > score2;
+      });
+}
+
 int main(int argc, char** argv) {
   google::InitGoogleLogging(argv[0]);
   google::InstallFailureSignalHandler();
@@ -411,6 +510,26 @@ int main(int argc, char** argv) {
                      &sliceNumSamples,
                      &sliceTime](int tid) {
     try {
+      // TR LM
+      af::setDevice(0);
+      std::shared_ptr<fl::Module> tr_lm;
+      std::shared_ptr<fl::Module> tr_criterion;
+      Dictionary tr_dict;
+      if (FLAGS_is_rescore) {
+        W2lSerializer::load(FLAGS_tr_lm, tr_lm, tr_criterion);
+        tr_lm->eval();
+        tr_criterion->eval();
+        auto tr_adsm =
+            dynamic_cast<fl::AdaptiveSoftMaxLoss*>(tr_criterion.get());
+        auto softmax = tr_adsm->getActivation();
+        tr_criterion = std::make_shared<fl::AdaptiveSoftMaxLoss>(
+            softmax, fl::ReduceMode::NONE, 1);
+        tr_criterion->eval();
+        std::cout << tr_criterion->prettyString();
+
+        tr_dict = createDictionary();
+      }
+
       /* 1. Prepare GPU-dependent resources */
       // Note: These 2 GPU-dependent models should be placed on different cards
       // for different threads and nthread_decoder should not be greater than
@@ -554,8 +673,10 @@ int main(int argc, char** argv) {
         // DecodeResult
         meters.timer.reset();
         meters.timer.resume();
-        const auto& results =
-            decoder->decode(emission.data(), nFrames, nTokens);
+        auto results = decoder->decode(emission.data(), nFrames, nTokens);
+        if (FLAGS_is_rescore) {
+          rerank_beam(results, tr_lm, tr_criterion, wordDict, tr_dict);
+        }
         meters.timer.stop();
 
         int nTopHyps = FLAGS_isbeamdump ? results.size() : 1;
@@ -661,35 +782,44 @@ int main(int argc, char** argv) {
 
   auto startThreadsAndJoin = [&runAmForward, &runDecoder](
                                  int nAmThreads, int nDecoderThreads) {
-    // We have to run AM forwarding and decoding in sequential to avoid GPU
-    // OOM with two large neural nets.
-    if (FLAGS_lmtype == "convlm") {
-      // 1. AM forwarding
-      {
-        fl::ThreadPool threadPool(nAmThreads);
-        for (int i = 0; i < nAmThreads; i++) {
-          threadPool.enqueue(runAmForward, i);
-        }
-      }
-      // 2. Decoding
-      {
-        fl::ThreadPool threadPool(nDecoderThreads);
-        for (int i = 0; i < nDecoderThreads; i++) {
-          threadPool.enqueue(runDecoder, i);
-        }
-      }
-    }
-    // Non-convLM decoding. AM forwarding and decoding can be run in parallel.
-    else {
-      fl::ThreadPool threadPool(nAmThreads + nDecoderThreads);
-      // AM forwarding threads
-      for (int i = 0; i < nAmThreads; i++) {
-        threadPool.enqueue(runAmForward, i);
-      }
-      // Decoding threads
+    // // We have to run AM forwarding and decoding in sequential to avoid GPU
+    // // OOM with two large neural nets.
+    // if (FLAGS_lmtype == "convlm") {
+    //   // 1. AM forwarding
+    //   {
+    //     fl::ThreadPool threadPool(nAmThreads);
+    //     for (int i = 0; i < nAmThreads; i++) {
+    //       threadPool.enqueue(runAmForward, i);
+    //     }
+    //   }
+    //   // 2. Decoding
+    //   {
+    //     fl::ThreadPool threadPool(nDecoderThreads);
+    //     for (int i = 0; i < nDecoderThreads; i++) {
+    //       threadPool.enqueue(runDecoder, i);
+    //     }
+    //   }
+    // }
+    // // Non-convLM decoding. AM forwarding and decoding can be run in parallel.
+    // else {
+    //   fl::ThreadPool threadPool(nAmThreads + nDecoderThreads);
+    //   // AM forwarding threads
+    //   for (int i = 0; i < nAmThreads; i++) {
+    //     threadPool.enqueue(runAmForward, i);
+    //   }
+    //   // Decoding threads
+    //   for (int i = 0; i < nDecoderThreads; i++) {
+    //     threadPool.enqueue(runDecoder, i);
+    //   }
+    // }
+
+    LOG(INFO) << "Emission generated";
+    {
+      fl::ThreadPool threadPool(nDecoderThreads + 1);
       for (int i = 0; i < nDecoderThreads; i++) {
         threadPool.enqueue(runDecoder, i);
       }
+      threadPool.enqueue(runAmForward, nDecoderThreads);
     }
   };
   auto timer = fl::TimeMeter();

@@ -328,6 +328,35 @@ DEFINE_string(
     "Shared file path used for setting up rendezvous."
     "If empty, uses MPI to initialize.");
 
+// PSEUDO LABEL OPTIONS
+DEFINE_string(
+    train_unsup,
+    "",
+    "comma-separated list of unsupervised training data");
+DEFINE_string(
+    decoder_sweep_epoch,
+    "100000",
+    "comma-separated list of epoch to regenerate run decoder sweep");
+DEFINE_string(
+    pl_epoch,
+    "100000",
+    "comma-separated list of epoch to regenerate PL");
+DEFINE_string(
+    n_pl_file,
+    "1",
+    "comma-separated list of number of files to regenerate PL");
+DEFINE_string(lmweight_range, "0,0", "comma-separated lmweight range");
+DEFINE_string(wordscore_range, "0,0", "comma-separated wordscore range");
+DEFINE_string(eosscore_range, "0,0", "comma-separated eosscore range");
+DEFINE_bool(use_existing_pl, false, "use existing pl from the list file");
+DEFINE_double(seed_model_wer, -1, "WER of seed model");
+DEFINE_bool(is_rescore, false, "");
+DEFINE_string(tr_lm, "", "tr_lm");
+DEFINE_double(tr_lmwight, 0, "tr_lmwight");
+DEFINE_double(tr_wordscore, 0, "tr_wordscore");
+DEFINE_int64(tr_nbest, 20, "tr_nbest");
+DEFINE_int64(tr_batchsize, 5, "tr_batchsize");
+
 // FB SPECIFIC
 DEFINE_string(target, "tkn", "target feature");
 DEFINE_bool(everstoredb, false, "use Everstore db for reading data");

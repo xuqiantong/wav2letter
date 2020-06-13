@@ -155,6 +155,9 @@ add_subdirectory(${PROJECT_SOURCE_DIR}/src/module)
 # Runtime
 add_subdirectory(${PROJECT_SOURCE_DIR}/src/runtime)
 
+# Decoder
+add_subdirectory(${PROJECT_SOURCE_DIR}/src/decoder)
+
 # Tests
 if (W2L_BUILD_TESTS)
   enable_testing()
@@ -188,6 +191,7 @@ target_link_libraries(
   data
   module
   runtime
+  decoder
   )
 
 target_include_directories(
@@ -231,6 +235,7 @@ target_link_libraries(
   Train
   wav2letter++
   )
+
 
 # ----------------------------- Test -----------------------------
 add_executable(

@@ -300,6 +300,23 @@ DECLARE_int64(world_size);
 DECLARE_int64(max_devices_per_node);
 DECLARE_string(rndv_filepath);
 
+/* ========== PSEUDO LABEL OPTIONS ========== */
+DECLARE_string(train_unsup);
+DECLARE_string(pl_epoch);
+DECLARE_string(decoder_sweep_epoch);
+DECLARE_string(n_pl_file);
+DECLARE_string(lmweight_range);
+DECLARE_string(wordscore_range);
+DECLARE_string(eosscore_range);
+DECLARE_bool(use_existing_pl);
+DECLARE_double(seed_model_wer);
+DECLARE_bool(is_rescore);
+DECLARE_string(tr_lm);
+DECLARE_double(tr_lmwight);
+DECLARE_double(tr_wordscore);
+DECLARE_int64(tr_nbest);
+DECLARE_int64(tr_batchsize);
+
 /* ========== FB SPECIFIC ========== */
 DECLARE_string(target);
 DECLARE_bool(everstoredb);

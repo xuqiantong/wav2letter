@@ -23,6 +23,7 @@
 #include "common/Transforms.h"
 #include "criterion/criterion.h"
 #include "data/Featurize.h"
+#include "decoder/PLGenerator.h"
 #include "libraries/common/Dictionary.h"
 #include "module/module.h"
 #include "runtime/runtime.h"
@@ -128,22 +129,28 @@ int main(int argc, char** argv) {
   // Only new flags are re-serialized. Copy any values from deprecated flags to
   // new flags when deprecated flags are present and corresponding new flags
   // aren't
+  LOG_MASTER(INFO) << "0";
   w2l::handleDeprecatedFlags();
 
   af::setSeed(FLAGS_seed);
   af::setFFTPlanCacheSize(FLAGS_fftcachesize);
 
   std::shared_ptr<fl::Reducer> reducer = nullptr;
+  LOG_MASTER(INFO) << "1";
   if (FLAGS_enable_distributed) {
+    LOG_MASTER(INFO) << "2";
     initDistributed(
         FLAGS_world_rank,
         FLAGS_world_size,
         FLAGS_max_devices_per_node,
         FLAGS_rndv_filepath);
+    LOG_MASTER(INFO) << "3";
     reducer = std::make_shared<fl::CoalescingReducer>(
         1.0 / fl::getWorldSize(), true, true);
+    LOG_MASTER(INFO) << "4";
   }
 
+  LOG_MASTER(INFO) << "5";
   int worldRank = fl::getWorldRank();
   int worldSize = fl::getWorldSize();
   bool isMaster = (worldRank == 0);
@@ -213,6 +220,7 @@ int main(int argc, char** argv) {
   std::shared_ptr<SequenceCriterion> criterion;
   std::shared_ptr<fl::FirstOrderOptimizer> netoptim;
   std::shared_ptr<fl::FirstOrderOptimizer> critoptim;
+  std::shared_ptr<PLGenerator> plGenerator = nullptr;
 
   auto scalemode = getCriterionScaleMode(FLAGS_onorm, FLAGS_sqnorm);
   if (runStatus == kTrainMode) {
@@ -247,7 +255,7 @@ int main(int argc, char** argv) {
   } else { // kContinueMode
     std::unordered_map<std::string, std::string> cfg; // unused
     W2lSerializer::load(
-        reloadPath, cfg, network, criterion, netoptim, critoptim);
+        reloadPath, cfg, network, criterion, netoptim, critoptim, plGenerator);
   }
   LOG_MASTER(INFO) << "[Network] " << network->prettyString();
   LOG_MASTER(INFO) << "[Network Params: " << numTotalParams(network) << "]";
@@ -328,13 +336,15 @@ int main(int argc, char** argv) {
     ar(CEREAL_NVP(config));
   }
 
-  auto logStatus = [&perfFile, &logFile, isMaster](
+  auto logStatus = [&perfFile, &logFile, &validTagSets, &plGenerator, isMaster](
                        TrainMeters& mtrs,
                        int64_t epoch,
                        int64_t nupdates,
                        double lr,
                        double lrcrit) {
     syncMeter(mtrs);
+    plGenerator->setModelWER(
+        mtrs.valid[validTagSets[0].first].wrdEdit.value()[0]);
 
     if (isMaster) {
       auto logMsg =
@@ -359,13 +369,25 @@ int main(int argc, char** argv) {
         filename =
             getRunFile(format("model_iter_%03d.bin", iter), runIdx, runPath);
         W2lSerializer::save(
-            filename, config, network, criterion, netoptim, critoptim);
+            filename,
+            config,
+            network,
+            criterion,
+            netoptim,
+            critoptim,
+            plGenerator);
       }
 
       // save last model
       filename = getRunFile("model_last.bin", runIdx, runPath);
       W2lSerializer::save(
-          filename, config, network, criterion, netoptim, critoptim);
+          filename,
+          config,
+          network,
+          criterion,
+          netoptim,
+          critoptim,
+          plGenerator);
 
       // save if better than ever for one valid
       for (const auto& v : validminerrs) {
@@ -376,7 +398,13 @@ int main(int argc, char** argv) {
           std::string vfname =
               getRunFile("model_" + cleaned_v + ".bin", runIdx, runPath);
           W2lSerializer::save(
-              vfname, config, network, criterion, netoptim, critoptim);
+              vfname,
+              config,
+              network,
+              criterion,
+              netoptim,
+              critoptim,
+              plGenerator);
         }
       }
       // print brief stats on memory allocation (so far)
@@ -404,6 +432,16 @@ int main(int argc, char** argv) {
   }
 
   /* ===================== Hooks ===================== */
+  if (!plGenerator) {
+    plGenerator = std::make_shared<PLGenerator>(
+        tokenDict, wordDict, lexicon, runPath, worldRank, worldSize);
+  } else {
+    plGenerator->setRank(worldRank, worldSize);
+    plGenerator->setDictionary(tokenDict, wordDict, lexicon);
+    plGenerator->loadLMandTrie();
+    plGenerator->loadRsDictionary();
+  }
+
   auto evalOutput = [&dicts, &criterion](
                         const af::array& op,
                         const af::array& target,
@@ -460,7 +498,7 @@ int main(int argc, char** argv) {
   auto trainEvalIds =
       getTrainEvalIds(trainds->size(), FLAGS_pcttraineval, FLAGS_seed);
 
-  int64_t curEpoch = startEpoch;
+  int curEpoch = startEpoch;
 
   auto train = [&meters,
                 &test,
@@ -471,6 +509,8 @@ int main(int argc, char** argv) {
                 &trainEvalIds,
                 &curEpoch,
                 &startUpdate,
+                &plGenerator,
+                &validTagSets,
                 reducer](
                    std::shared_ptr<fl::Module> ntwrk,
                    std::shared_ptr<SequenceCriterion> crit,
@@ -550,6 +590,10 @@ int main(int argc, char** argv) {
     };
 
     int64_t curBatch = startUpdate;
+    trainset =
+        plGenerator->reloadPL(curEpoch, validTagSets[0], ntwrk, crit, trainset);
+    LOG_MASTER(INFO) << "pl generator loaded"; 
+
     while (curBatch < nbatches) {
       ++curEpoch; // counts partial epochs too!
       int epochsAfterDecay = curEpoch - FLAGS_lr_decay;
@@ -686,6 +730,9 @@ int main(int argc, char** argv) {
         runValAndSaveModel(
             curEpoch, curBatch, netopt->getLr(), critopt->getLr());
       }
+
+      trainset = plGenerator->regenratePL(
+          curEpoch, validTagSets[0], ntwrk, crit, trainset);
     }
   };
 
