@@ -779,25 +779,25 @@ int main(int argc, char** argv) {
 
   auto startThreadsAndJoin = [&runAmForward, &runDecoder](
                                  int nAmThreads, int nDecoderThreads) {
-    // We have to run AM forwarding and decoding in sequential to avoid GPU
-    // OOM with two large neural nets.
+    // // We have to run AM forwarding and decoding in sequential to avoid GPU
+    // // OOM with two large neural nets.
     // if (FLAGS_lmtype == "convlm") {
-    // 1. AM forwarding
-    // {
-    //   fl::ThreadPool threadPool(nAmThreads);
-    //   for (int i = 0; i < nAmThreads; i++) {
-    //     threadPool.enqueue(runAmForward, i);
+    //   // 1. AM forwarding
+    //   {
+    //     fl::ThreadPool threadPool(nAmThreads);
+    //     for (int i = 0; i < nAmThreads; i++) {
+    //       threadPool.enqueue(runAmForward, i);
+    //     }
+    //   }
+    //   // 2. Decoding
+    //   {
+    //     fl::ThreadPool threadPool(nDecoderThreads);
+    //     for (int i = 0; i < nDecoderThreads; i++) {
+    //       threadPool.enqueue(runDecoder, i);
+    //     }
     //   }
     // }
-    // // 2. Decoding
-    // {
-    //   fl::ThreadPool threadPool(nDecoderThreads);
-    //   for (int i = 0; i < nDecoderThreads; i++) {
-    //     threadPool.enqueue(runDecoder, i);
-    //   }
-    // }
-    // }
-    // Non-convLM decoding. AM forwarding and decoding can be run in parallel.
+    // // Non-convLM decoding. AM forwarding and decoding can be run in parallel.
     // else {
     //   fl::ThreadPool threadPool(nAmThreads + nDecoderThreads);
     //   // AM forwarding threads
@@ -810,14 +810,13 @@ int main(int argc, char** argv) {
     //   }
     // }
 
-    runAmForward(0);
     LOG(INFO) << "Emission generated";
-    // runDecoder(0);
     {
-      fl::ThreadPool threadPool(nDecoderThreads);
+      fl::ThreadPool threadPool(nDecoderThreads + 1);
       for (int i = 0; i < nDecoderThreads; i++) {
         threadPool.enqueue(runDecoder, i);
       }
+      threadPool.enqueue(runAmForward, nDecoderThreads);
     }
   };
   auto timer = fl::TimeMeter();
