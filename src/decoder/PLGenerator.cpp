@@ -524,6 +524,7 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
       std::vector<BeamElement> beam;
       std::string savePath = pathsConcat(FLAGS_emission_dir, sampleId + ".bin");
       W2lSerializer::load(savePath, beam);
+      std::remove(savePath.c_str());
 
       std::sort(
           beam.begin(),

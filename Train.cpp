@@ -129,22 +129,28 @@ int main(int argc, char** argv) {
   // Only new flags are re-serialized. Copy any values from deprecated flags to
   // new flags when deprecated flags are present and corresponding new flags
   // aren't
+  LOG_MASTER(INFO) << "0";
   w2l::handleDeprecatedFlags();
 
   af::setSeed(FLAGS_seed);
   af::setFFTPlanCacheSize(FLAGS_fftcachesize);
 
   std::shared_ptr<fl::Reducer> reducer = nullptr;
+  LOG_MASTER(INFO) << "1";
   if (FLAGS_enable_distributed) {
+    LOG_MASTER(INFO) << "2";
     initDistributed(
         FLAGS_world_rank,
         FLAGS_world_size,
         FLAGS_max_devices_per_node,
         FLAGS_rndv_filepath);
+    LOG_MASTER(INFO) << "3";
     reducer = std::make_shared<fl::CoalescingReducer>(
         1.0 / fl::getWorldSize(), true, true);
+    LOG_MASTER(INFO) << "4";
   }
 
+  LOG_MASTER(INFO) << "5";
   int worldRank = fl::getWorldRank();
   int worldSize = fl::getWorldSize();
   bool isMaster = (worldRank == 0);
@@ -587,6 +593,7 @@ int main(int argc, char** argv) {
     int64_t curBatch = startUpdate;
     trainset =
         plGenerator->reloadPL(curEpoch, validTagSets[0], ntwrk, crit, trainset);
+    LOG_MASTER(INFO) << "pl generator loaded"; 
 
     while (curBatch < nbatches) {
       ++curEpoch; // counts partial epochs too!
