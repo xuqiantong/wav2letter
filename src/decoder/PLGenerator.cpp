@@ -62,6 +62,74 @@ std::vector<float> getLmScore(
  * 6. [Feature] continue PL generating if failed/stopped in the middle
  */
 
+void PLGenerator::resetFlags(
+  std::string runPath, 
+  int worldRank,
+  int worldSize) {
+  LOG_MASTER(INFO) << "Reset PL flags";
+  runPath_ = runPath;
+  worldRank_ = worldRank,
+  worldSize_ = worldSize,
+  dirCreate(pathsConcat(runPath_, "generated_pl"));
+  filteringWER_ = FLAGS_filtering_wer;
+  filteringPPL_ = FLAGS_filtering_ppl;
+  seedModelWER_ = FLAGS_seed_model_wer;
+
+  // 0.1 Load PL generating intervals
+  plEpochVec_ = split(',', FLAGS_pl_epoch, true);
+  auto nPlFileVec = split(',', FLAGS_n_pl_file, true);
+  auto decoderSweepEpochVec = split(',', FLAGS_decoder_sweep_epoch, true);
+  if (plEpochVec_.size() != nPlFileVec.size()) {
+    LOG(FATAL) << "plEpochVec wtf?";
+  }
+  for (int i = 0; i < plEpochVec_.size(); i++) {
+    plUpdateMap_[stoi(plEpochVec_[i])] = {stoi(nPlFileVec[i]), false};
+  }
+  for (int i = 0; i < decoderSweepEpochVec.size(); i++) {
+    int epoch = stoi(decoderSweepEpochVec[i]);
+    if (plUpdateMap_.find(epoch) == plUpdateMap_.end()) {
+      LOG(FATAL) << "decoderSweepEpochVec wtf?";
+    }
+    plUpdateMap_[epoch].second = true;
+  }
+  LOG_MASTER(INFO) << "---plUpdateMap";
+  for (const auto& item : plUpdateMap_) {
+    LOG_MASTER(INFO) << item.first << " [" << item.second.first << ", "
+                     << item.second.second << "]";
+  }
+  LOG_MASTER(INFO) << "---";
+
+  unsupFiles_ = split(',', FLAGS_train_unsup, true);
+
+  // 0.2 Load parameter range
+  auto rangeVec = split(',', FLAGS_lmweight_range);
+  if (rangeVec.size() != 2) {
+    LOG(FATAL) << "FLAGS_lmweight_range needs two numbers";
+  }
+  lmweightRange_.resize(2);
+  for (int i = 0; i < rangeVec.size(); i++) {
+    lmweightRange_[i] = stod(rangeVec[i]);
+  }
+
+  rangeVec = split(',', FLAGS_wordscore_range);
+  if (rangeVec.size() != 2) {
+    LOG(FATAL) << "FLAGS_wordscore_range needs two numbers";
+  }
+  wordscoreRange_.resize(2);
+  for (int i = 0; i < rangeVec.size(); i++) {
+    wordscoreRange_[i] = stod(rangeVec[i]);
+  }
+
+  rangeVec = split(',', FLAGS_eosscore_range);
+  if (rangeVec.size() != 2) {
+    LOG(FATAL) << "FLAGS_eosscore_range needs two numbers";
+  }
+  eosscoreRange_.resize(2);
+  for (int i = 0; i < rangeVec.size(); i++) {
+    eosscoreRange_[i] = stod(rangeVec[i]);
+  }
+}
+
 PLGenerator::PLGenerator(
     const Dictionary& tokenDict,
     const Dictionary& wordDict,
@@ -76,7 +144,9 @@ PLGenerator::PLGenerator(
       lexicon_(lexicon),
       wordDict_(wordDict),
       runPath_(runPath),
-      seedModelWER_(FLAGS_seed_model_wer) {
+      seedModelWER_(FLAGS_seed_model_wer),
+      filteringWER_(FLAGS_filtering_wer),
+      filteringPPL_(FLAGS_filtering_ppl) {
   /* 0. Parse PL flags */
   dirCreate(pathsConcat(runPath_, "generated_pl"));
 
@@ -442,9 +512,11 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
     // 3.4 decode unlabeled data + write
     LOG(INFO) << "PL generating in " << worldRank_;
     auto newListPath = pathsConcat(plDir, std::to_string(worldRank_) + ".lst");
+    auto newListPathFiltered = pathsConcat(plDir, std::to_string(worldRank_) + ".lst.golden");
     auto newListFinishPath =
         pathsConcat(plDir, std::to_string(worldRank_) + ".fns");
     std::ofstream nlStream(newListPath);
+    std::ofstream nlStreamFiltered(newListPathFiltered);
 
     for (auto& sample : *trainunsupds) {
       auto sampleId = readSampleIds(sample[kSampleIdx]).front();
@@ -463,11 +535,113 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
                 besWordScore_ * p2.trans.size();
             return score1 > score2;
           });
-
-      nlStream << sampleId << " " << metaInfo[sampleId] << " "
-               << join(" ", beam[0].trans) << std::endl;
+      auto tokenTarget = afToVector<int>(sample[kTargetIdx]);
+      auto letterTarget = tknTarget2Ltr(tokenTarget, tokenDict_);
+      auto wordTargetStr = tkn2Wrd(letterTarget);
+      float distance = helper::levensteinDistance(
+        beam[0].trans.data(), wordTargetStr.data(), beam[0].trans.size(), wordTargetStr.size());
+      auto pplValue = std::exp(-beam[0].lmScore / double(beam[0].trans.size() + 1)); 
+      bool isGood = true;
+      int ngramRepetitionThr = 3;
+      // check if too long words appearing
+      for (int index = 0; index < beam[0].trans.size(); index++) {
+        if (beam[0].trans[index].size() > 17) {
+          isGood = false;
+          break;
+        }
+      }
+      // check looping
+      for (int ngram = 1; ngram < 7; ngram++) {
+        int keepVal = ngram;
+        for (int index = ngram; index < beam[0].trans.size(); index++) {
+          if (beam[0].trans[index] == beam[0].trans[index - ngram]) {
+            keepVal++;
+          } else {
+            keepVal = ngram;
+          }
+          if (keepVal >= ngramRepetitionThr * ngram) {
+            isGood = false;
+            break;
+          }
+        }
+        if (!isGood) {
+          break;
+        }
+      }
+      std::unordered_map<std::string, int> occurenceNgram;
+      for (int index = 0; index + 2 < beam[0].trans.size(); index++) {
+        // std::string currentNgram = join(" ", beam[0].trans.begin() + index, beam[0].trans.begin() + index + 3);
+        std::string currentNgram = beam[0].trans[index] + " " + beam[0].trans[index + 1] + " " + beam[0].trans[index + 2];
+        if (occurenceNgram.find(currentNgram) != occurenceNgram.end()) {
+          occurenceNgram.at(currentNgram) += 1;
+          if (occurenceNgram.at(currentNgram) >= 3) {
+            isGood = false;
+            break;
+          }
+        } else {
+          occurenceNgram[currentNgram] = 1;
+        }
+      }
+      std::unordered_map<std::string, int> occurence5gram;
+      for (int index = 0; index + 4 < beam[0].trans.size(); index++) {
+        // std::string currentNgram = join(" ", beam[0].trans.begin() + index, beam[0].trans.begin() + index + 5);
+        std::string currentNgram = beam[0].trans[index] + " " + beam[0].trans[index + 1] + " " + beam[0].trans[index + 2] +
+          beam[0].trans[index + 3] + " " + beam[0].trans[index + 4];
+        if (occurence5gram.find(currentNgram) != occurence5gram.end()) {
+          occurence5gram.at(currentNgram) += 1;
+          if (occurence5gram.at(currentNgram) >= 2) {
+            isGood = false;
+            break;
+          }
+        } else {
+          occurence5gram[currentNgram] = 1;
+        }
+      }
+      bool filterSample = false;
+      if (FLAGS_use_hand_filtering && !isGood) {
+        filterSample = true;
+      } 
+      // check audio length vs transcription length (in the band of linear fit on dev data)
+      if (FLAGS_use_band) {
+        double fitK = 0.00264543, fitB = 0.9461018037691673, shift = 10.;
+        double duration = std::stof(splitOnWhitespace(metaInfo[sampleId])[1]);
+        if ((FLAGS_use_band_side == 0) && 
+            ((beam[0].trans.size() > fitK * duration + fitB + shift) ||
+            (beam[0].trans.size() < fitK * duration + fitB - shift))) {
+          filterSample = true;
+        } else if ((FLAGS_use_band_side == 1) && 
+            (beam[0].trans.size() > fitK * duration + fitB + shift)) {
+          filterSample = true;
+        } else if ((FLAGS_use_band_side == -1) && 
+            (beam[0].trans.size() < fitK * duration + fitB - shift)) {
+          filterSample = true;
+        }
+      } else if (FLAGS_use_band_bird) {
+        double fitK = 0.00269046, fitB = 0.568089959984853, shift = 40;
+        double duration = std::stof(splitOnWhitespace(metaInfo[sampleId])[1]);
+        if ((FLAGS_use_band_side == 0) && 
+            ((beam[0].trans.size() > (fitK * 35000 + shift) / 35000 * duration + fitB) ||
+            (beam[0].trans.size() < (fitK * 35000 - shift) / 35000 * duration + fitB))) {
+          filterSample = true;
+        } else if ((FLAGS_use_band_side == 1) && 
+            (beam[0].trans.size() > (fitK * 35000 + shift) / 35000 * duration + fitB)) {
+          filterSample = true;
+        } else if ((FLAGS_use_band_side == -1) && 
+            (beam[0].trans.size() < (fitK * 35000 - shift) / 35000 * duration + fitB)) {
+          filterSample = true;
+        }
+      }
+      if (distance <= filteringWER_ && pplValue <= filteringPPL_ && !filterSample) {
+        nlStream << sampleId << " " << metaInfo[sampleId] << " "
+                 << join(" ", beam[0].trans) << std::endl;
+      } 
+      nlStreamFiltered << sampleId << " " << metaInfo[sampleId] << " "
+              << distance << " " << pplValue << " " << isGood <<  " " 
+              << beam[0].amScore << " " << join(" ", wordTargetStr)
+              << " | " << join(" ", beam[0].trans) << std::endl;
     }
-
+    nlStreamFiltered.close();
+    
     // PL generation finished
     std::ofstream nlfStream(newListFinishPath);
     nlfStream << "done";
@@ -628,9 +802,17 @@ std::vector<BeamElement> PLGenerator::generateBeam(
     std::vector<std::vector<std::string>> batch;
     for (int j = i; j < i + batchsize; j++) {
       auto rawWordPrediction = beam[j].words;
-      rawWordPrediction =
-          validateIdx(rawWordPrediction, wordDict_.getIndex(kUnkToken));
-      auto wordPrediction = wrdIdx2Wrd(rawWordPrediction, wordDict_);
+      auto rawTokenPrediction = beam[j].tokens;
+      auto letterPrediction =
+          tknPrediction2Ltr(rawTokenPrediction, tokenDict_);
+      std::vector<std::string> wordPrediction;
+      if (FLAGS_uselexicon) {        
+        rawWordPrediction =
+            validateIdx(rawWordPrediction, wordDict_.getIndex(kUnkToken));
+        wordPrediction = wrdIdx2Wrd(rawWordPrediction, wordDict_);
+      } else {
+        wordPrediction = tkn2Wrd(letterPrediction);
+      }
       batch.push_back(wordPrediction);
 
       TestMeters localMeters;

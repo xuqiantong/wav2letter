@@ -77,6 +77,7 @@ DEFINE_bool(lrcosine, false, "use cosine learning rate schedule");
 // LEARNING HYPER-PARAMETER OPTIONS
 DEFINE_int64(iter, std::numeric_limits<int64_t>::max(), "number of updates");
 DEFINE_bool(itersave, false, "save model at each iteration");
+DEFINE_int64(itersaven, 0, "save model at each number iteration");
 DEFINE_double(lr, 1.0, "learning rate");
 DEFINE_double(momentum, 0.0, "momentum factor");
 DEFINE_double(weightdecay, 0.0, "weight decay (L2 penalty)");
@@ -356,6 +357,12 @@ DEFINE_double(tr_lmwight, 0, "tr_lmwight");
 DEFINE_double(tr_wordscore, 0, "tr_wordscore");
 DEFINE_int64(tr_nbest, 20, "tr_nbest");
 DEFINE_int64(tr_batchsize, 5, "tr_batchsize");
+DEFINE_double(filtering_wer, 100000000, "filter if sample wer greater than this threshold");
+DEFINE_double(filtering_ppl, 100000000, "filter if sample transformer ppl greater than this threshold");
+DEFINE_bool(use_band, false, "use audio len vs transcription len band filtering");
+DEFINE_bool(use_band_bird, false, "use audio len vs transcription len bird band filtering");
+DEFINE_int64(use_band_side, 0, "in case of band 0 - use both sides, 1 - upper, -1 - lower");
+DEFINE_bool(use_hand_filtering, true, "use loops, repetitions and long word removal");
 
 // FB SPECIFIC
 DEFINE_string(target, "tkn", "target feature");

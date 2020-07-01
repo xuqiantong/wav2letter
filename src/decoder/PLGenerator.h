@@ -72,6 +72,8 @@ class PLGenerator {
 
   void loadRsDictionary();
 
+  void resetFlags(std::string runPath, int worldRank, int worldSize);
+
  private:
   int worldRank_;
   int worldSize_;
@@ -101,6 +103,9 @@ class PLGenerator {
   double seedModelWER_;
   double currentModelWER_;
 
+  double filteringWER_;
+  double filteringPPL_{1000000000000.};
+
   std::vector<std::string> plEpochVec_;
   std::unordered_map<int, std::pair<int, bool>> plUpdateMap_;
   std::vector<std::string> unsupFiles_;
@@ -128,11 +133,13 @@ class PLGenerator {
       bestEosScore_,
       seedModelWER_,
       currentModelWER_,
+      filteringWER_,
       plEpochVec_,
       plUpdateMap_,
       unsupFiles_,
       rsLm_,
-      rsCriterion_)
+      rsCriterion_,
+      fl::versioned(filteringPPL_, 1))
 
   PLGenerator() = default;
 
@@ -148,3 +155,66 @@ class PLGenerator {
       const std::shared_ptr<SequenceCriterion> criterion);
 };
 } // namespace w2l
+
+namespace helper {
+  struct ErrorState {
+    int64_t ndel; //!< Number of deletion error
+    int64_t nins; //!< Number of insertion error
+    int64_t nsub; //!< Number of substitution error
+    ErrorState() : ndel(0), nins(0), nsub(0) {}
+
+    /** Sums up all the errors. */
+    int64_t sum() const {
+      return ndel + nins + nsub;
+    }
+  };
+
+  template <typename T>
+  double levensteinDistance(
+      const T& in1begin,
+      const T& in2begin,
+      size_t len1,
+      size_t len2) {
+    std::vector<ErrorState> column(len1 + 1);
+    for (int i = 0; i <= len1; ++i) {
+      column[i].nins = i;
+    }
+
+    auto curin2 = in2begin;
+    for (int x = 1; x <= len2; x++) {
+      ErrorState lastdiagonal = column[0];
+      column[0].ndel = x;
+      auto curin1 = in1begin;
+      for (int y = 1; y <= len1; y++) {
+        auto olddiagonal = column[y];
+        auto possibilities = {
+            column[y].sum() + 1,
+            column[y - 1].sum() + 1,
+            lastdiagonal.sum() + ((*curin1 == *curin2) ? 0 : 1)};
+        auto min_it =
+            std::min_element(possibilities.begin(), possibilities.end());
+        if (std::distance(possibilities.begin(), min_it) ==
+            0) { // deletion error
+          ++column[y].ndel;
+        } else if (
+            std::distance(possibilities.begin(), min_it) == 1) { // insertion
+                                                                 // error
+          column[y] = column[y - 1];
+          ++column[y].nins;
+        } else {
+          column[y] = lastdiagonal;
+          if (*curin1 != *curin2) { // substitution error
+            ++column[y].nsub;
+          }
+        }
+
+        lastdiagonal = olddiagonal;
+        ++curin1;
+      }
+      ++curin2;
+    }
+
+    return column[len1].sum() / (double)len2;
+  }
+} // namespace helper
+

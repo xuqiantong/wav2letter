@@ -147,6 +147,7 @@ DECLARE_bool(lrcosine);
 
 DECLARE_int64(iter);
 DECLARE_bool(itersave);
+DECLARE_int64(itersaven);
 DECLARE_double(lr);
 DECLARE_double(momentum);
 DECLARE_double(weightdecay);
@@ -316,6 +317,12 @@ DECLARE_double(tr_lmwight);
 DECLARE_double(tr_wordscore);
 DECLARE_int64(tr_nbest);
 DECLARE_int64(tr_batchsize);
+DECLARE_double(filtering_wer);
+DECLARE_double(filtering_ppl);
+DECLARE_bool(use_band);
+DECLARE_bool(use_band_bird);
+DECLARE_bool(use_hand_filtering);
+DECLARE_int64(use_band_side);
 
 /* ========== FB SPECIFIC ========== */
 DECLARE_string(target);
