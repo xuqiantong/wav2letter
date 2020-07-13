@@ -119,7 +119,7 @@ int main(int argc, char** argv) {
       FLAGS_test,
       dicts,
       lexicon,
-      1 /* batchsize */,
+      FLAGS_batchsize /* batchsize */,
       0 /* worldrank */,
       1 /* worldsize */);
 
@@ -211,68 +211,71 @@ int main(int argc, char** argv) {
         sample = ds->get(datasetSampleId);
         datasetSampleId++;
       }
-      auto rawEmission =
+      auto rawEmissionBatch =
           localNetwork->forward({fl::input(sample[kInputIdx])}).front();
-      auto emission = afToVector<float>(rawEmission);
-      auto tokenTarget = afToVector<int>(sample[kTargetIdx]);
-      auto wordTarget = afToVector<int>(sample[kWordIdx]);
-      auto sampleId = readSampleIds(sample[kSampleIdx]).front();
+      for (int i = 0; i < rawEmissionBatch.dims(2); i++) {
+        auto rawEmission = fl::reorder(fl::reorder(rawEmissionBatch, 0, 2, 1).col(i), 0, 2, 1);
+        auto emission = afToVector<float>(rawEmission);
+        auto tokenTarget = afToVector<int>(sample[kTargetIdx].col(i));
+        auto wordTarget = afToVector<int>(sample[kWordIdx].col(i));
+        auto sampleId = readSampleIds(sample[kSampleIdx].col(i)).front();
 
-      auto letterTarget = tknTarget2Ltr(tokenTarget, tokenDict);
-      std::vector<std::string> wordTargetStr;
-      if (FLAGS_uselexicon) {
-        wordTargetStr = wrdIdx2Wrd(wordTarget, wordDict);
-      } else {
-        wordTargetStr = tkn2Wrd(letterTarget);
-      }
+        auto letterTarget = tknTarget2Ltr(tokenTarget, tokenDict);
+        std::vector<std::string> wordTargetStr;
+        if (FLAGS_uselexicon) {
+          wordTargetStr = wrdIdx2Wrd(wordTarget, wordDict);
+        } else {
+          wordTargetStr = tkn2Wrd(letterTarget);
+        }
 
-      // Tokens
-      auto tokenPrediction =
-          afToVector<int>(localCriterion->viterbiPath(rawEmission.array()));
-      auto letterPrediction = tknPrediction2Ltr(tokenPrediction, tokenDict);
+        // Tokens
+        auto tokenPrediction =
+            afToVector<int>(localCriterion->viterbiPath(rawEmission.array()));
+        auto letterPrediction = tknPrediction2Ltr(tokenPrediction, tokenDict);
 
-      meters.lerSlice.add(letterPrediction, letterTarget);
+        meters.lerSlice.add(letterPrediction, letterTarget);
 
-      // Words
-      std::vector<std::string> wrdPredictionStr = tkn2Wrd(letterPrediction);
-      meters.werSlice.add(wrdPredictionStr, wordTargetStr);
+        // Words
+        std::vector<std::string> wrdPredictionStr = tkn2Wrd(letterPrediction);
+        meters.werSlice.add(wrdPredictionStr, wordTargetStr);
 
-      if (!FLAGS_sclite.empty()) {
-        writeRef(join(" ", wordTargetStr) + " (" + sampleId + ")\n");
-        writeHyp(join(" ", wrdPredictionStr) + " (" + sampleId + ")\n");
-      }
+        if (!FLAGS_sclite.empty()) {
+          writeRef(join(" ", wordTargetStr) + " (" + sampleId + ")\n");
+          writeHyp(join(" ", wrdPredictionStr) + " (" + sampleId + ")\n");
+        }
 
-      if (FLAGS_show) {
-        meters.ler.reset();
-        meters.wer.reset();
-        meters.ler.add(letterPrediction, letterTarget);
-        meters.wer.add(wrdPredictionStr, wordTargetStr);
+        if (FLAGS_show) {
+          meters.ler.reset();
+          meters.wer.reset();
+          meters.ler.add(letterPrediction, letterTarget);
+          meters.wer.add(wrdPredictionStr, wordTargetStr);
 
-        std::cout << "|T|: " << join(" ", letterTarget) << std::endl;
-        std::cout << "|P|: " << join(" ", letterPrediction) << std::endl;
-        std::cout << "[sample: " << sampleId
-                  << ", WER: " << meters.wer.value()[0]
-                  << "\%, LER: " << meters.ler.value()[0]
-                  << "\%, total WER: " << meters.werSlice.value()[0]
-                  << "\%, total LER: " << meters.lerSlice.value()[0]
-                  << "\%, progress (thread " << tid << "): "
-                  << static_cast<float>(datasetSampleId) / nSamples * 100
-                  << "\%]" << std::endl;
-      }
+          std::cout << "|T|: " << join(" ", letterTarget) << std::endl;
+          std::cout << "|P|: " << join(" ", letterPrediction) << std::endl;
+          std::cout << "[sample: " << sampleId
+                    << ", WER: " << meters.wer.value()[0]
+                    << "\%, LER: " << meters.ler.value()[0]
+                    << "\%, total WER: " << meters.werSlice.value()[0]
+                    << "\%, total LER: " << meters.lerSlice.value()[0]
+                    << "\%, progress (thread " << tid << "): "
+                    << static_cast<float>(datasetSampleId) / nSamples * 100
+                    << "\%]" << std::endl;
+        }
 
-      /* Save emission and targets */
-      int nTokens = rawEmission.dims(0);
-      int nFrames = rawEmission.dims(1);
-      EmissionUnit emissionUnit(emission, sampleId, nFrames, nTokens);
+        /* Save emission and targets */
+        int nTokens = rawEmission.dims(0);
+        int nFrames = rawEmission.dims(1);
+        EmissionUnit emissionUnit(emission, sampleId, nFrames, nTokens);
 
-      // Update counters
-      sliceNumWords[tid] += wordTarget.size();
-      sliceNumTokens[tid] += letterTarget.size();
-      sliceNumSamples[tid]++;
+        // Update counters
+        sliceNumWords[tid] += wordTarget.size();
+        sliceNumTokens[tid] += letterTarget.size();
+        sliceNumSamples[tid]++;
 
-      if (!emissionDir.empty()) {
-        std::string savePath = pathsConcat(emissionDir, sampleId + ".bin");
-        W2lSerializer::save(savePath, emissionUnit);
+        if (!emissionDir.empty()) {
+          std::string savePath = pathsConcat(emissionDir, sampleId + ".bin");
+          W2lSerializer::save(savePath, emissionUnit);
+        }
       }
     }
 
