@@ -363,6 +363,16 @@ DEFINE_bool(use_band, false, "use audio len vs transcription len band filtering"
 DEFINE_bool(use_band_bird, false, "use audio len vs transcription len bird band filtering");
 DEFINE_int64(use_band_side, 0, "in case of band 0 - use both sides, 1 - upper, -1 - lower");
 DEFINE_bool(use_hand_filtering, true, "use loops, repetitions and long word removal");
+DEFINE_bool(google_filt, false, "apply google filtering");
+DEFINE_double(google_thr, 1, "apply google filtering with thr");
+DEFINE_bool(logreg_filt, false, "apply logreg filtering");
+DEFINE_double(logreg_filt_fpr, 0.3, "apply logreg filtering fpr thr");
+DEFINE_bool(ipl_decay_lm, false, "apply lm weight decay if viterbi is better than final wer");
+DEFINE_bool(ipl_saug, false, "apply saug for data during PL generation");
+DEFINE_int64(decoder_length_delta, 0, "s2s decoder length delta");
+DEFINE_string(decoder_length_model, "", "model to predict length");
+DEFINE_int64(input_rand_shift, 0, "Max number of frames by which the input can get shifted by");
+DEFINE_bool(start_swa, false, "apply model averaging across updates, save on each epoch");
 
 // FB SPECIFIC
 DEFINE_string(target, "tkn", "target feature");

@@ -20,7 +20,9 @@
 
 namespace w2l {
 
-void LexiconSeq2SeqDecoder::decodeStep(const float* emissions, int T, int N) {
+// predlength T x N
+void LexiconSeq2SeqDecoder::decodeStep(const float* emissions, int T, int N, int predLength) {
+  std::cout << "Current predicted length " << predLength << std::endl;
   // Extend hyp_ buffer
   if (hyp_.size() < maxOutputLength_ + 2) {
     for (int i = hyp_.size(); i < maxOutputLength_ + 2; i++) {
@@ -40,7 +42,11 @@ void LexiconSeq2SeqDecoder::decodeStep(const float* emissions, int T, int N) {
 
   // Decode frame by frame
   int t = 0;
+  bool allFinished = false;
   for (; t < maxOutputLength_; t++) {
+    if (allFinished) {
+      break;
+    }
     candidatesReset(candidatesBestScore_, candidates_, candidatePtrs_);
 
     // Batch forwarding
@@ -67,6 +73,7 @@ void LexiconSeq2SeqDecoder::decodeStep(const float* emissions, int T, int N) {
     std::vector<size_t> idx(amScores.back().size());
 
     // Generate new hypothesis
+    allFinished = true;
     for (int hypo = 0, validHypo = 0; hypo < hyp_[t].size(); hypo++) {
       const LexiconSeq2SeqDecoderState& prevHyp = hyp_[t][hypo];
       // Change nothing for completed hypothesis
@@ -83,9 +90,11 @@ void LexiconSeq2SeqDecoder::decodeStep(const float* emissions, int T, int N) {
             -1,
             nullptr,
             prevHyp.amScore,
-            prevHyp.lmScore);
+            prevHyp.lmScore,
+            prevHyp.nWords);
         continue;
       }
+      allFinished = false;
 
       const AMStatePtr& outState = outStates[validHypo];
       if (!outState) {
@@ -115,7 +124,10 @@ void LexiconSeq2SeqDecoder::decodeStep(const float* emissions, int T, int N) {
         double amScore = amScores[validHypo][n];
 
         /* (1) Try eos */
-        if (n == eos_ && (prevLex == lexicon_->getRoot())) {
+        if ((n == eos_ && (prevLex == lexicon_->getRoot()) && 
+             (predLength < 0 || (predLength > -1 && prevHyp.nWords >= predLength - opt_.window))) ||
+            (predLength > -1 && prevLex == lexicon_->getRoot() && prevHyp.nWords >= predLength + opt_.window)) {
+          amScore = amScores[validHypo][eos_];
           auto lmStateScorePair = lm_->finish(prevHyp.lmState);
           LMStatePtr lmState = lmStateScorePair.first;
           double lmScore;
@@ -133,11 +145,16 @@ void LexiconSeq2SeqDecoder::decodeStep(const float* emissions, int T, int N) {
               lmState,
               lexicon_->getRoot(),
               &prevHyp,
-              n,
+              eos_,
               -1,
               nullptr,
               prevHyp.amScore + amScore,
-              prevHyp.lmScore + lmScore);
+              prevHyp.lmScore + lmScore,
+              prevHyp.nWords);
+        }
+        /* exit if too long hyp */
+        if (predLength > -1 && prevLex == lexicon_->getRoot() && prevHyp.nWords >= predLength + opt_.window) {
+          break;
         }
 
         /* (2) Try normal token */
@@ -168,7 +185,8 @@ void LexiconSeq2SeqDecoder::decodeStep(const float* emissions, int T, int N) {
                 -1,
                 outState,
                 prevHyp.amScore + amScore,
-                prevHyp.lmScore + lmScore);
+                prevHyp.lmScore + lmScore,
+                prevHyp.nWords);
 
             // If we got a true word
             if (lex->labels.size() > 0) {
@@ -191,7 +209,8 @@ void LexiconSeq2SeqDecoder::decodeStep(const float* emissions, int T, int N) {
                     word,
                     outState,
                     prevHyp.amScore + amScore,
-                    prevHyp.lmScore + lmScore);
+                    prevHyp.lmScore + lmScore,
+                    prevHyp.nWords + 1);
                 if (isLmToken_) {
                   break;
                 }

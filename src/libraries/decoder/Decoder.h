@@ -38,16 +38,16 @@ class Decoder {
   virtual void decodeBegin() {}
 
   /* Consume emissions in T x N chunks and increase the hypothesis space */
-  virtual void decodeStep(const float* emissions, int T, int N) = 0;
+  virtual void decodeStep(const float* emissions, int T, int N, int predLength = -1) = 0;
 
   /* Finish up decoding after consuming all emissions */
   virtual void decodeEnd() {}
 
   /* Offline decode function, which consume all emissions at once */
   virtual std::vector<DecodeResult>
-  decode(const float* emissions, int T, int N) {
+  decode(const float* emissions, int T, int N, int predLength = -1) {
     decodeBegin();
-    decodeStep(emissions, T, N);
+    decodeStep(emissions, T, N, predLength);
     decodeEnd();
     return getAllFinalHypothesis();
   }

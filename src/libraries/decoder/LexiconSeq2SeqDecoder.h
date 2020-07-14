@@ -41,6 +41,7 @@ struct LexiconSeq2SeqDecoderState {
 
   double amScore; // Accumulated AM score so far
   double lmScore; // Accumulated LM score so far
+  int nWords; // Accumulated number of words
 
   LexiconSeq2SeqDecoderState(
       const double score,
@@ -51,7 +52,8 @@ struct LexiconSeq2SeqDecoderState {
       const int word,
       const AMStatePtr& amState,
       const double amScore = 0,
-      const double lmScore = 0)
+      const double lmScore = 0,
+      const int nWords = 0)
       : score(score),
         lmState(lmState),
         lex(lex),
@@ -60,7 +62,8 @@ struct LexiconSeq2SeqDecoderState {
         word(word),
         amState(amState),
         amScore(amScore),
-        lmScore(lmScore) {}
+        lmScore(lmScore),
+        nWords(nWords) {}
 
   LexiconSeq2SeqDecoderState()
       : score(0),
@@ -71,7 +74,8 @@ struct LexiconSeq2SeqDecoderState {
         word(-1),
         amState(nullptr),
         amScore(0.),
-        lmScore(0.) {}
+        lmScore(0.),
+        nWords(0) {}
 
   int compareNoScoreStates(const LexiconSeq2SeqDecoderState* node) const {
     int lmCmp = lmState->compare(node->lmState);
@@ -121,7 +125,7 @@ class LexiconSeq2SeqDecoder : public Decoder {
         maxOutputLength_(maxOutputLength),
         isLmToken_(isLmToken) {}
 
-  void decodeStep(const float* emissions, int T, int N) override;
+  void decodeStep(const float* emissions, int T, int N, int predLength = -1) override;
 
   void prune(int lookBack = 0) override;
 

@@ -262,6 +262,17 @@ int main(int argc, char** argv) {
   LOG_MASTER(INFO) << "[Network Params: " << numTotalParams(network) << "]";
   LOG_MASTER(INFO) << "[Criterion] " << criterion->prettyString();
 
+  std::vector<af::array> swaNetworkParams, swaCriterionParams;
+  int nSWAModels = 1;
+  if (FLAGS_start_swa) {
+    for (size_t i = 0; i < network->params().size(); ++i) {
+      swaNetworkParams.push_back(network->params()[i].array() + 0);
+    }
+    for (size_t i = 0; i < criterion->params().size(); ++i) {
+      swaCriterionParams.push_back(criterion->params()[i].array() + 0);
+    }
+  }
+
   if (runStatus == kTrainMode || runStatus == kForkMode) {
     netoptim = initOptimizer(
         {network}, FLAGS_netoptim, FLAGS_lr, FLAGS_momentum, FLAGS_weightdecay);
@@ -408,6 +419,32 @@ int main(int argc, char** argv) {
               plGenerator);
         }
       }
+      if (FLAGS_start_swa) {
+        filename =
+            getRunFile(format("model_swa_%03d.bin", iter), runIdx, runPath);
+        std::vector<af::array> tmpN;
+        std::vector<af::array> tmpC;
+        for (size_t i = 0; i < network->params().size(); ++i) {
+          tmpN.push_back(network->param(i).array());
+          network->setParams(fl::Variable(swaNetworkParams[i], false), i);
+        }
+        for (size_t i = 0; i < criterion->params().size(); ++i) {
+          tmpC.push_back(criterion->param(i).array());
+          criterion->setParams(fl::Variable(swaCriterionParams[i], false), i);
+        }
+
+        W2lSerializer::save(
+            filename, config, network, criterion, netoptim, critoptim, plGenerator);
+
+        for (size_t i = 0; i < network->params().size(); ++i) {
+          network->setParams(fl::Variable(tmpN[i], true), i);
+        }
+        for (size_t i = 0; i < criterion->params().size(); ++i) {
+          criterion->setParams(fl::Variable(tmpC[i], true), i);
+        }
+        tmpN.clear();
+        tmpC.clear();
+      }
       // print brief stats on memory allocation (so far)
       auto* curMemMgr =
           fl::MemoryManagerInstaller::currentlyInstalledMemoryManager();
@@ -512,7 +549,10 @@ int main(int argc, char** argv) {
                 &startUpdate,
                 &plGenerator,
                 &validTagSets,
-                reducer](
+                reducer,
+                &swaNetworkParams,
+                &swaCriterionParams,
+                &nSWAModels](
                    std::shared_ptr<fl::Module> ntwrk,
                    std::shared_ptr<SequenceCriterion> crit,
                    std::shared_ptr<W2lDataset> trainset,
@@ -642,6 +682,12 @@ int main(int argc, char** argv) {
         // forward
         meters.fwdtimer.resume();
         auto input = fl::input(batch[kInputIdx]);
+        if (FLAGS_input_rand_shift) {
+          int64_t inputT = input.dims(0);
+          int64_t shift = rand() % (FLAGS_input_rand_shift + 1);
+          shift = std::min(shift, inputT - 1);
+          input = input(af::seq(shift, af::end), af::span, af::span);
+        }
         if (FLAGS_saug_start_update >= 0 &&
             curBatch >= FLAGS_saug_start_update) {
           input = saug->forward(input);
@@ -712,6 +758,19 @@ int main(int argc, char** argv) {
         meters.optimtimer.stopAndIncUnit();
         meters.sampletimer.resume();
 
+        if (FLAGS_start_swa) {
+          for (size_t i = 0; i < ntwrk->params().size(); ++i) {
+            swaNetworkParams[i] = (swaNetworkParams[i] * nSWAModels + ntwrk->params()[i].array()) /
+                (nSWAModels + 1);
+            swaNetworkParams[i].eval();
+          }
+          for (size_t i = 0; i < crit->params().size(); ++i) {
+            swaCriterionParams[i] = (swaCriterionParams[i] * nSWAModels + crit->params()[i].array()) /
+                (nSWAModels + 1);
+            swaCriterionParams[i].eval();
+          }
+          nSWAModels++;
+        }
         if (FLAGS_reportiters > 0 && curBatch % FLAGS_reportiters == 0) {
           runValAndSaveModel(
               curEpoch, curBatch, netopt->getLr(), critopt->getLr());

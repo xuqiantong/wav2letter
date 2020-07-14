@@ -35,6 +35,7 @@ struct DecoderOptions {
   double eosScore; // Score for inserting an EOS
   bool logAdd; // If or not use logadd when merging hypothesis
   CriterionType criterionType; // CTC or ASG
+  int window; // s2s restriction on length
 
   DecoderOptions(
       const int beamSize,
@@ -46,7 +47,8 @@ struct DecoderOptions {
       const double silScore,
       const double eosScore,
       const bool logAdd,
-      const CriterionType criterionType)
+      const CriterionType criterionType,
+      const int window = 0)
       : beamSize(beamSize),
         beamSizeToken(beamSizeToken),
         beamThreshold(beamThreshold),
@@ -56,7 +58,8 @@ struct DecoderOptions {
         silScore(silScore),
         eosScore(eosScore),
         logAdd(logAdd),
-        criterionType(criterionType) {}
+        criterionType(criterionType),
+        window(window) {}
 
   DecoderOptions() {}
 };

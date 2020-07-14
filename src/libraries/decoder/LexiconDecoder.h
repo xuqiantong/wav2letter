@@ -119,7 +119,7 @@ class LexiconDecoder : public Decoder {
 
   void decodeBegin() override;
 
-  void decodeStep(const float* emissions, int T, int N) override;
+  void decodeStep(const float* emissions, int T, int N, int predLength = -1) override;
 
   void decodeEnd() override;
 

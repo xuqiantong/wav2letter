@@ -105,6 +105,7 @@ class PLGenerator {
 
   double filteringWER_;
   double filteringPPL_{1000000000000.};
+  double lmScale_{1};
 
   std::vector<std::string> plEpochVec_;
   std::unordered_map<int, std::pair<int, bool>> plUpdateMap_;
@@ -115,6 +116,12 @@ class PLGenerator {
   Dictionary rsDict_;
 
   std::vector<std::vector<BeamElement>> beamVec_; // For decoding sweep
+  std::vector<BeamElement> beamBest_;
+  std::vector<float> lengthFitParams_;
+  std::shared_ptr<fl::Linear> logreg_;
+  float logregThr_ = 0;
+
+  std::shared_ptr<fl::Module> lengthNtwk_{nullptr};
 
   FL_SAVE_LOAD(
       worldRank_,
@@ -139,7 +146,9 @@ class PLGenerator {
       unsupFiles_,
       rsLm_,
       rsCriterion_,
-      fl::versioned(filteringPPL_, 1))
+      fl::versioned(filteringPPL_, 1),
+      fl::versioned(lmScale_, 2),
+      fl::versioned(lengthNtwk_, 3))
 
   PLGenerator() = default;
 

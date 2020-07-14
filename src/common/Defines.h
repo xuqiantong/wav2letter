@@ -323,6 +323,16 @@ DECLARE_bool(use_band);
 DECLARE_bool(use_band_bird);
 DECLARE_bool(use_hand_filtering);
 DECLARE_int64(use_band_side);
+DECLARE_bool(google_filt);
+DECLARE_double(google_thr);
+DECLARE_bool(logreg_filt);
+DECLARE_double(logreg_filt_fpr);
+DECLARE_bool(ipl_decay_lm);
+DECLARE_bool(ipl_saug);
+DECLARE_int64(decoder_length_delta);
+DECLARE_string(decoder_length_model);
+DECLARE_int64(input_rand_shift);
+DECLARE_bool(start_swa);
 
 /* ========== FB SPECIFIC ========== */
 DECLARE_string(target);

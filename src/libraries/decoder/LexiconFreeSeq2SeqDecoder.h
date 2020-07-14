@@ -12,6 +12,7 @@
 #include <unordered_map>
 
 #include "libraries/decoder/Decoder.h"
+#include "libraries/common/Dictionary.h"
 #include "libraries/lm/LM.h"
 
 namespace w2l {
@@ -38,6 +39,7 @@ struct LexiconFreeSeq2SeqDecoderState {
 
   double amScore; // Accumulated AM score so far
   double lmScore; // Accumulated LM score so far
+  int nWords; // Accumulated number of words
 
   LexiconFreeSeq2SeqDecoderState(
       const double score,
@@ -46,14 +48,16 @@ struct LexiconFreeSeq2SeqDecoderState {
       const int token,
       const AMStatePtr& amState = nullptr,
       const double amScore = 0,
-      const double lmScore = 0)
+      const double lmScore = 0,
+      const int nWords = 0)
       : score(score),
         lmState(lmState),
         parent(parent),
         token(token),
         amState(amState),
         amScore(amScore),
-        lmScore(lmScore) {}
+        lmScore(lmScore),
+        nWords(nWords) {}
 
   LexiconFreeSeq2SeqDecoderState()
       : score(0),
@@ -62,7 +66,8 @@ struct LexiconFreeSeq2SeqDecoderState {
         token(-1),
         amState(nullptr),
         amScore(0.),
-        lmScore(0.) {}
+        lmScore(0.),
+        nWords(0) {}
 
   int compareNoScoreStates(const LexiconFreeSeq2SeqDecoderState* node) const {
     return lmState->compare(node->lmState);
@@ -93,14 +98,16 @@ class LexiconFreeSeq2SeqDecoder : public Decoder {
       const LMPtr& lm,
       const int eos,
       AMUpdateFunc amUpdateFunc,
-      const int maxOutputLength)
+      const int maxOutputLength,
+      const Dictionary tokensDict)
       : Decoder(opt),
         lm_(lm),
         eos_(eos),
         amUpdateFunc_(amUpdateFunc),
-        maxOutputLength_(maxOutputLength) {}
+        maxOutputLength_(maxOutputLength),
+        tokensDict_(tokensDict) {}
 
-  void decodeStep(const float* emissions, int T, int N) override;
+  void decodeStep(const float* emissions, int T, int N, int predLength = -1) override;
 
   void prune(int lookBack = 0) override;
 
@@ -123,6 +130,7 @@ class LexiconFreeSeq2SeqDecoder : public Decoder {
   double candidatesBestScore_;
 
   std::unordered_map<int, std::vector<LexiconFreeSeq2SeqDecoderState>> hyp_;
+  Dictionary tokensDict_;
 };
 
 } // namespace w2l

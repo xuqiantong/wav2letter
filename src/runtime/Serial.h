@@ -109,8 +109,9 @@ struct EmissionUnit {
   std::string sampleId;
   int nFrames;
   int nTokens;
+  int predLength{0};
 
-  FL_SAVE_LOAD(emission, sampleId, nFrames, nTokens)
+  FL_SAVE_LOAD(emission, sampleId, nFrames, nTokens, fl::versioned(predLength, 1))
 
   EmissionUnit() : nFrames(0), nTokens(0) {}
 
@@ -118,11 +119,13 @@ struct EmissionUnit {
       const std::vector<float>& emission,
       const std::string& sampleId,
       int nFrames,
-      int nTokens)
+      int nTokens,
+      int predLength)
       : emission(emission),
         sampleId(sampleId),
         nFrames(nFrames),
-        nTokens(nTokens) {}
+        nTokens(nTokens),
+        predLength(predLength) {}
 };
 
 struct TargetUnit {

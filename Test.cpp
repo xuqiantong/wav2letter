@@ -51,6 +51,7 @@ int main(int argc, char** argv) {
 
   /* ===================== Create Network ===================== */
   std::shared_ptr<fl::Module> network;
+  std::shared_ptr<fl::Module> lengthNetwork;
   std::shared_ptr<SequenceCriterion> criterion;
   std::unordered_map<std::string, std::string> cfg;
   LOG(INFO) << "[Network] Reading acoustic model from " << FLAGS_am;
@@ -58,6 +59,13 @@ int main(int argc, char** argv) {
   W2lSerializer::load(FLAGS_am, cfg, network, criterion);
   network->eval();
   criterion->eval();
+
+  if (FLAGS_decoder_length_model != "") {
+    std::unordered_map<std::string, std::string> dummyCfg;
+    W2lSerializer::load(FLAGS_decoder_length_model, dummyCfg, lengthNetwork);
+    LOG(INFO) << "Loaded length network " << FLAGS_decoder_length_model;
+    lengthNetwork->eval();
+  }
 
   LOG(INFO) << "[Network] " << network->prettyString();
   LOG(INFO) << "[Criterion] " << criterion->prettyString();
@@ -178,6 +186,7 @@ int main(int argc, char** argv) {
               &datasetSampleId,
               &network,
               &criterion,
+              &lengthNetwork,
               &nSamples,
               &ds,
               &tokenDict,
@@ -213,19 +222,43 @@ int main(int argc, char** argv) {
       }
       auto rawEmissionBatch =
           localNetwork->forward({fl::input(sample[kInputIdx])}).front();
+      af::array predLength, predBlanks;
+      if (lengthNetwork) {
+        // 2 x T x B
+        auto result = lengthNetwork->forward({fl::input(sample[kInputIdx])}).front(); 
+        af::array indices, maxTmp;
+        af::max(maxTmp, indices, result.array(), 0);
+        predLength = af::moddims(indices, af::dim4(indices.dims(1), indices.dims(2)));
+      }
       for (int i = 0; i < rawEmissionBatch.dims(2); i++) {
         auto rawEmission = fl::reorder(fl::reorder(rawEmissionBatch, 0, 2, 1).col(i), 0, 2, 1);
         auto emission = afToVector<float>(rawEmission);
         auto tokenTarget = afToVector<int>(sample[kTargetIdx].col(i));
+        auto labellen = getTargetSize(tokenTarget.data(), tokenTarget.size());
+        tokenTarget.resize(labellen);
         auto wordTarget = afToVector<int>(sample[kWordIdx].col(i));
         auto sampleId = readSampleIds(sample[kSampleIdx].col(i)).front();
 
         auto letterTarget = tknTarget2Ltr(tokenTarget, tokenDict);
-        std::vector<std::string> wordTargetStr;
-        if (FLAGS_uselexicon) {
-          wordTargetStr = wrdIdx2Wrd(wordTarget, wordDict);
-        } else {
-          wordTargetStr = tkn2Wrd(letterTarget);
+        std::vector<std::string> wordTargetStr = tkn2Wrd(letterTarget);
+        // if (FLAGS_uselexicon) {
+        //   wordTargetStr = wrdIdx2Wrd(wordTarget, wordDict);
+        // } else {
+        //   wordTargetStr = tkn2Wrd(letterTarget);
+        // }
+        int predLengthSample = -1;
+        if (lengthNetwork) {
+          auto predLengthRaw = predLength.col(i).host<unsigned int>();
+          predLengthSample = 0;
+          auto predToken = predLengthRaw[0];
+          for (int index = 1; index < predLength.dims(0); index++) {
+            if (predLengthRaw[index] != predToken) {
+              predLengthSample += predToken == 0; // count word
+              predToken = predLengthRaw[index];
+            }
+          }
+          predLengthSample += predToken == 0; // count word
+          LOG(INFO) << " Length " << predLengthSample << " Target " << wordTargetStr.size();
         }
 
         // Tokens
@@ -265,10 +298,10 @@ int main(int argc, char** argv) {
         /* Save emission and targets */
         int nTokens = rawEmission.dims(0);
         int nFrames = rawEmission.dims(1);
-        EmissionUnit emissionUnit(emission, sampleId, nFrames, nTokens);
+        EmissionUnit emissionUnit(emission, sampleId, nFrames, nTokens, predLengthSample);
 
         // Update counters
-        sliceNumWords[tid] += wordTarget.size();
+        sliceNumWords[tid] += wordTargetStr.size();
         sliceNumTokens[tid] += letterTarget.size();
         sliceNumSamples[tid]++;
 

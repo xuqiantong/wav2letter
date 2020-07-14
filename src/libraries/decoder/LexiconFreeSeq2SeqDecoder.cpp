@@ -11,6 +11,7 @@
 #include <cmath>
 #include <functional>
 #include <numeric>
+#include <iostream>
 
 #include "libraries/decoder/LexiconFreeSeq2SeqDecoder.h"
 
@@ -19,7 +20,9 @@ namespace w2l {
 void LexiconFreeSeq2SeqDecoder::decodeStep(
     const float* emissions,
     int T,
-    int N) {
+    int N, 
+    int predLength) {
+  std::cout << "Current predicted length " << predLength << std::endl;
   // Extend hyp_ buffer
   if (hyp_.size() < maxOutputLength_ + 2) {
     for (int i = hyp_.size(); i < maxOutputLength_ + 2; i++) {
@@ -33,7 +36,11 @@ void LexiconFreeSeq2SeqDecoder::decodeStep(
 
   // Decode frame by frame
   int t = 0;
+  bool allFinished = false;
   for (; t < maxOutputLength_; t++) {
+    if (allFinished) {
+      break;
+    }
     candidatesReset(candidatesBestScore_, candidates_, candidatePtrs_);
 
     // Batch forwarding
@@ -60,6 +67,7 @@ void LexiconFreeSeq2SeqDecoder::decodeStep(
     std::vector<size_t> idx(amScores.back().size());
 
     // Generate new hypothesis
+    allFinished = true;
     for (int hypo = 0, validHypo = 0; hypo < hyp_[t].size(); hypo++) {
       const LexiconFreeSeq2SeqDecoderState& prevHyp = hyp_[t][hypo];
       // Change nothing for completed hypothesis
@@ -74,9 +82,11 @@ void LexiconFreeSeq2SeqDecoder::decodeStep(
             eos_,
             nullptr,
             prevHyp.amScore,
-            prevHyp.lmScore);
+            prevHyp.lmScore,
+            prevHyp.nWords);
         continue;
       }
+      allFinished = false;
 
       const AMStatePtr& outState = outStates[validHypo];
       if (!outState) {
@@ -95,13 +105,19 @@ void LexiconFreeSeq2SeqDecoder::decodeStep(
             });
       }
 
+      bool usedEos = false;
       for (int r = 0;
            r < std::min(amScores[validHypo].size(), (size_t)opt_.beamSizeToken);
            r++) {
         int n = idx[r];
         double amScore = amScores[validHypo][n];
 
-        if (n == eos_) { /* (1) Try eos */
+        if (n == eos_ && predLength > -1 && prevHyp.nWords + 1 < predLength - opt_.window) {
+          // eos token but sentence is too short
+          continue;
+        } else if (n == eos_ && 
+             (predLength < 0 || (predLength > -1 && prevHyp.nWords + 1 >= predLength - opt_.window))) {
+          /* (1) Try eos */
           auto lmStateScorePair = lm_->finish(prevHyp.lmState);
           auto lmScore = lmStateScorePair.second;
 
@@ -112,24 +128,54 @@ void LexiconFreeSeq2SeqDecoder::decodeStep(
               prevHyp.score + amScore + opt_.eosScore + opt_.lmWeight * lmScore,
               lmStateScorePair.first,
               &prevHyp,
-              n,
+              eos_,
               nullptr,
               prevHyp.amScore + amScore,
-              prevHyp.lmScore + lmScore);
+              prevHyp.lmScore + lmScore,
+              prevHyp.nWords + 1); // finish current word and add eos
         } else { /* (2) Try normal token */
           auto lmStateScorePair = lm_->score(prevHyp.lmState, n);
           auto lmScore = lmStateScorePair.second;
-          candidatesAdd(
-              candidates_,
-              candidatesBestScore_,
-              opt_.beamThreshold,
-              prevHyp.score + amScore + opt_.lmWeight * lmScore,
-              lmStateScorePair.first,
-              &prevHyp,
-              n,
-              outState,
-              prevHyp.amScore + amScore,
-              prevHyp.lmScore + lmScore);
+          std::string tokenStr = tokensDict_.getEntry(n);
+          int newWord = 0;
+          if (tokenStr[0] == '_') {
+            newWord++;
+          }
+          if (predLength > -1 && prevHyp.nWords + 1 + newWord >= predLength + opt_.window) {
+            /* exit if too long hyp */
+            if (!usedEos) {
+              lmStateScorePair = lm_->finish(prevHyp.lmState);
+              lmScore = lmStateScorePair.second;
+              amScore = amScores[validHypo][eos_];
+
+              candidatesAdd(
+                  candidates_,
+                  candidatesBestScore_,
+                  opt_.beamThreshold,
+                  prevHyp.score + amScore + opt_.eosScore + opt_.lmWeight * lmScore,
+                  lmStateScorePair.first,
+                  &prevHyp,
+                  eos_,
+                  nullptr,
+                  prevHyp.amScore + amScore,
+                  prevHyp.lmScore + lmScore,
+                  prevHyp.nWords + 1); // finish current word and add eos
+              usedEos = true;
+            }
+          } else {
+            candidatesAdd(
+                candidates_,
+                candidatesBestScore_,
+                opt_.beamThreshold,
+                prevHyp.score + amScore + opt_.lmWeight * lmScore,
+                lmStateScorePair.first,
+                &prevHyp,
+                n,
+                outState,
+                prevHyp.amScore + amScore,
+                prevHyp.lmScore + lmScore,
+                prevHyp.nWords + newWord);
+          }
         }
       }
       validHypo++;

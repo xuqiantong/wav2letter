@@ -166,6 +166,7 @@ int main(int argc, char** argv) {
   }
 
   std::shared_ptr<fl::Module> network;
+  std::shared_ptr<fl::Module> lengthNetwork;
   std::shared_ptr<SequenceCriterion> criterion;
   std::unordered_map<std::string, std::string> cfg;
 
@@ -188,6 +189,12 @@ int main(int argc, char** argv) {
     }
     LOG(INFO) << "[Network] Updating flags from config file: " << FLAGS_am;
     gflags::ReadFlagsFromString(flags->second, gflags::GetArgv0(), true);
+    if (FLAGS_decoder_length_model != "") {
+      std::unordered_map<std::string, std::string> dummyCfg;
+      W2lSerializer::load(FLAGS_decoder_length_model, dummyCfg, lengthNetwork);
+      LOG(INFO) << "Loaded length network " << FLAGS_decoder_length_model;
+      lengthNetwork->eval();
+    }
   }
 
   // override with user-specified flags
@@ -272,7 +279,8 @@ int main(int argc, char** argv) {
       FLAGS_silscore,
       FLAGS_eosscore,
       FLAGS_logadd,
-      criterionType);
+      criterionType,
+      FLAGS_decoder_length_delta);
 
   // Prepare log writer
   std::mutex hypMutex, refMutex, logMutex;
@@ -410,6 +418,7 @@ int main(int argc, char** argv) {
                        &datasetGlobalSampleId,
                        &network,
                        &criterion,
+                       &lengthNetwork,
                        &nSamples,
                        &ds,
                        &tokenDict,
@@ -418,12 +427,20 @@ int main(int argc, char** argv) {
     // Initialize AM
     af::setDevice(tid);
     std::shared_ptr<fl::Module> localNetwork = network;
+    std::shared_ptr<fl::Module> localLengthNetwork = lengthNetwork;
     std::shared_ptr<SequenceCriterion> localCriterion = criterion;
+    
     if (tid != 0) {
       std::unordered_map<std::string, std::string> dummyCfg;
       W2lSerializer::load(FLAGS_am, dummyCfg, localNetwork, localCriterion);
       localNetwork->eval();
       localCriterion->eval();
+      if (FLAGS_decoder_length_model != "") {
+        std::unordered_map<std::string, std::string> dummyCfg;
+        W2lSerializer::load(FLAGS_decoder_length_model, dummyCfg, localLengthNetwork);
+        LOG(INFO) << "Loaded length network int the " << tid << " thread";
+        localLengthNetwork->eval();
+      }
     }
 
     while (datasetGlobalSampleId < nSamples) {
@@ -460,11 +477,30 @@ int main(int argc, char** argv) {
       if (FLAGS_emission_dir.empty()) {
         auto rawEmission =
             localNetwork->forward({fl::input(sample[kInputIdx])}).front();
+        int predLength = -1;
+        if (localLengthNetwork) {
+          // 2 x T x B
+          auto result = localLengthNetwork->forward({fl::input(sample[kInputIdx])}).front(); 
+          af::array indices, maxTmp;
+          af::max(maxTmp, indices, result.array(), 0);
+          auto predLengthRaw = af::flat(indices).host<unsigned int>();
+          predLength = 0;
+          auto predToken = predLengthRaw[0];
+          for (int index = 1; index < indices.dims(1); index++) {
+            if (predLengthRaw[index] != predToken) {
+              predLength += predToken == 0; // count word
+              predToken = predLengthRaw[index];
+            }
+          }
+          predLength += predToken == 0; // count word
+          LOG(INFO) << "Length " << predLength << " target " << wordTargetStr.size();
+        }
         emissionUnit = EmissionUnit(
             afToVector<float>(rawEmission),
             sampleId,
             rawEmission.dims(1),
-            rawEmission.dims(0));
+            rawEmission.dims(0),
+            predLength);
       } else {
         auto cleanTestPath = cleanFilepath(FLAGS_test);
         std::string emissionDir =
@@ -482,6 +518,7 @@ int main(int argc, char** argv) {
     localNetwork.reset(); // AM is only used in running forward pass. So we will
                           // free the space of it on GPU or memory.
                           // localNetwork.use_count() will be 0 after this call.
+    localLengthNetwork.reset();
 
     af::deviceGC(); // Explicitly call the Garbage collector.
   };
@@ -608,7 +645,8 @@ int main(int argc, char** argv) {
                 localLm,
                 eosIdx,
                 amUpdateFunc,
-                FLAGS_maxdecoderoutputlen));
+                FLAGS_maxdecoderoutputlen,
+                tokenDict));
             LOG(INFO)
                 << "[Decoder] LexiconFreeSeq2Seq decoder with token-LM loaded in thread: "
                 << tid;
@@ -667,13 +705,14 @@ int main(int argc, char** argv) {
         const auto& nTokens = emissionUnit.nTokens;
         const auto& emission = emissionUnit.emission;
         const auto& sampleId = emissionUnit.sampleId;
+        const auto& predLength = emissionUnit.predLength;
         const auto& wordTarget = targetUnit.wordTargetStr;
         const auto& tokenTarget = targetUnit.tokenTarget;
 
         // DecodeResult
         meters.timer.reset();
         meters.timer.resume();
-        auto results = decoder->decode(emission.data(), nFrames, nTokens);
+        auto results = decoder->decode(emission.data(), nFrames, nTokens, predLength);
         if (FLAGS_is_rescore) {
           rerank_beam(results, tr_lm, tr_criterion, wordDict, tr_dict);
         }

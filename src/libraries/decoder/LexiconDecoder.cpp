@@ -28,7 +28,7 @@ void LexiconDecoder::decodeBegin() {
   nPrunedFrames_ = 0;
 }
 
-void LexiconDecoder::decodeStep(const float* emissions, int T, int N) {
+void LexiconDecoder::decodeStep(const float* emissions, int T, int N, int predLength) {
   int startFrame = nDecodedFrames_ - nPrunedFrames_;
   // Extend hyp_ buffer
   if (hyp_.size() < startFrame + T + 2) {

@@ -128,6 +128,11 @@ void PLGenerator::resetFlags(
   for (int i = 0; i < rangeVec.size(); i++) {
     eosscoreRange_[i] = stod(rangeVec[i]);
   }
+  if (FLAGS_decoder_length_model != "") {
+    std::unordered_map<std::string, std::string> dummyCfg;
+    W2lSerializer::load(FLAGS_decoder_length_model, dummyCfg, lengthNtwk_);
+    lengthNtwk_->eval();
+  }
 }
 
 PLGenerator::PLGenerator(
@@ -247,6 +252,11 @@ PLGenerator::PLGenerator(
     rsCriterion_->eval();
 
     loadRsDictionary();
+  }
+  if (FLAGS_decoder_length_model != "") {
+    std::unordered_map<std::string, std::string> dummyCfg;
+    W2lSerializer::load(FLAGS_decoder_length_model, dummyCfg, lengthNtwk_);
+    lengthNtwk_->eval();
   }
 }
 
@@ -387,15 +397,17 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
       FLAGS_beamsize,
       FLAGS_beamsizetoken,
       FLAGS_beamthreshold,
-      FLAGS_lmweight,
+      FLAGS_lmweight * lmScale_,
       FLAGS_wordscore,
       FLAGS_unkscore,
       FLAGS_silscore,
       FLAGS_eosscore,
       FLAGS_logadd,
-      criterionType_);
+      criterionType_,
+      FLAGS_decoder_length_delta);
   auto decoder = buildDecoder(opt, criterion);
 
+  std::vector<float> audioLength;
   if (worldRank_ == 0) {
     LOG_MASTER(INFO) << "bestLmWeight_ " << bestLmWeight_;
     LOG_MASTER(INFO) << "decoding sweep = "
@@ -409,6 +421,7 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
       beamVec_.clear();
       for (const auto& sample : *ds) {
         beamVec_.push_back(generateBeam(sample, ntwrk, decoder));
+        audioLength.push_back(sample[kInputIdx].dims(0));
       }
 
       generateRandomWeights();
@@ -418,6 +431,7 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
         auto ws = wordscoreList_[i];
 
         float sum = 0, weight = 0;
+        std::vector<BeamElement> beamBestCurrent;
         for (auto& beam : beamVec_) {
           std::sort(
               beam.begin(),
@@ -432,16 +446,131 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
 
           sum += beam[0].wer * beam[0].targetLength;
           weight += beam[0].targetLength;
+          beamBestCurrent.push_back(beam[0]);
         }
 
         float wer = sum / weight;
         if (wer < bestWer) {
+          beamBest_ = beamBestCurrent;
           bestWer = wer;
           bestLmWeight_ = lmw;
           besWordScore_ = ws;
         }
       }
-
+      if (FLAGS_ipl_decay_lm && currentModelWER_ < bestWer) {
+        lmScale_ /= 2;
+      }
+      if (FLAGS_google_filt) {
+        float meanLen = 0; 
+        float meanScore = 0;
+        float meanLenScore = 0;
+        float meanLen2 = 0;
+        float N = beamBest_.size();
+        for (const auto& elem : beamBest_) {
+          float score = elem.amScore + bestLmWeight_ * elem.lmScore;
+          float len = elem.trans.size();
+          meanLen += len;
+          meanScore += score;
+          meanLenScore += len * score;
+          meanLen2 += len * len;
+        }
+        float alpha = meanLenScore / N - meanScore / N * meanLen / N;
+        alpha /= meanLen2 / N - std::pow(meanLen / N, 2);
+        float beta = meanScore / N - alpha * meanLen / N;
+        float meanValues = 0;
+        std::vector<float> values;
+        for (const auto& elem : beamBest_) {
+          float score = elem.amScore + bestLmWeight_ * elem.lmScore;
+          float len = elem.trans.size();
+          float val = (score - alpha * len - beta) / std::pow(len, 0.5);
+          values.push_back(val);
+          meanValues += val;
+        }
+        meanValues /= N;
+        float sigma = 0;
+        for (int i = 0; i < N; i++) {
+          sigma += std::pow((values[i] - meanValues), 2);
+        }
+        sigma /= N - 1;
+        sigma = std::pow(sigma, 0.5);
+        lengthFitParams_ = {alpha, beta, sigma};
+        std::ofstream paramStream(pathsConcat(plDir, "google.lst"));
+        paramStream << alpha << " " << beta << " " << sigma;
+        paramStream.close();
+      }
+      if (FLAGS_logreg_filt) {
+        std::vector<float> dataLogReg;
+        std::vector<int> targetLogReg;
+        int index = 0;
+        float werTarget = 0;
+        for (const auto& elem : beamBest_) {
+          werTarget += elem.wer;
+        }
+        werTarget /= beamBest_.size();
+        for (const auto& elem : beamBest_) {
+            dataLogReg.push_back(elem.amScore);
+            dataLogReg.push_back(elem.lmScore);
+            dataLogReg.push_back(elem.trans.size());
+            dataLogReg.push_back(audioLength[index]);
+            index++;
+            targetLogReg.push_back(elem.wer < werTarget);
+        }
+        LOG(INFO) << "Logreg target wer is " << werTarget;
+        int nTrain = 2000, nTest = int(beamBest_.size()) - 2000;
+        af::array xLogreg(af::dim4(4, nTrain), dataLogReg.data());
+        af::array yLogreg(af::dim4(1, nTrain), targetLogReg.data());
+        af::array xLogregTest(af::dim4(4, nTest), dataLogReg.data() + nTrain * 4);
+        af::array yLogregTest(af::dim4(nTest), targetLogReg.data() + nTrain);
+        af::array xMean = af::sum(xLogreg, 1) / nTrain;
+        xLogreg = xLogreg - af::tile(xMean, 1, nTrain);
+        af::array xStd = af::pow(af::sum(xLogreg * xLogreg, 1) / nTrain, 0.5);
+        xLogreg = xLogreg / af::tile(xStd, 1, nTrain);
+        xLogregTest = (xLogregTest - af::tile(xMean, 1, nTest)) / af::tile(xStd, 1, nTest);
+        logreg_ = std::make_shared<fl::Linear>(4, 1, true);
+        logreg_->train();
+        auto optimizer = std::make_shared<fl::SGDOptimizer>(
+          logreg_->params(), 0.5, 0, 0.5, false);
+        for (int epoch = 0; epoch < 5000; epoch++) {
+          af::print("coeffs", logreg_->params()[0].array());
+          auto output = -1 * logreg_->forward(fl::input(xLogreg));
+          af::print("linear", output.array());
+          // log(1 + exp(-x)) = log exp(M) (exp(-M) + exp(-x - M)) = M + log (exp(-M) + exp(-M - x))
+          // M = max(0, -x)
+          // output = -x
+          auto maxComponent = fl::max(0, output);
+          auto firstPart = maxComponent + fl::log(fl::exp(-1 * maxComponent) + fl::exp(output - maxComponent));
+          auto loss = fl::mean(firstPart - (1 - fl::Variable(yLogreg, false)) * output, {1});
+          af::print("loss", loss.array());
+          af::sync();
+          optimizer->zeroGrad();
+          loss.backward();
+          af::sync();
+          optimizer->step();
+          af::sync();
+          logreg_->eval();
+          output = -1 * logreg_->forward(fl::input(xLogregTest));
+          maxComponent = fl::max(0, output);
+          firstPart = maxComponent + fl::log(fl::exp(-1 * maxComponent) + fl::exp(output - maxComponent));
+          loss = fl::mean(firstPart - (1 - fl::Variable(af::moddims(yLogregTest, af::dim4(1, nTest)), false)) * output, {1});
+          af::print("test loss", loss.array());
+          logreg_->train();
+        }
+        logreg_->eval();
+        LOG(INFO) << "Logreg finish training; run eval;";
+        auto output = -1 * logreg_->forward(fl::input(xLogregTest));
+        auto maxComponent = fl::max(0, output);
+        auto logprob = -1 * maxComponent  - fl::log(fl::exp(-1 * maxComponent) + fl::exp(output - maxComponent));
+        auto result = af::sort(af::flat(logprob.array())(yLogregTest < 0.5), 0);
+        int thrIndex = (int)((1 - FLAGS_logreg_filt_fpr) * result.dims(0)) - 1;
+        thrIndex = std::min(std::max(0, thrIndex), (int)result.dims(0) - 1);
+        logregThr_ = result.row(thrIndex).scalar<float>();
+        float tpr = af::sum(af::flat(logprob.array())(yLogregTest > 0.5) > logregThr_).scalar<unsigned int>() / (float) nTest;
+        W2lSerializer::save(pathsConcat(plDir, "logreg.bin"), logreg_, xMean, xStd);
+        LOG_MASTER(INFO) << "Log reg finished: thr = " << logregThr_ << " tpr = " << tpr;
+        std::ofstream paramStream(pathsConcat(plDir, "logreg.lst"));
+        paramStream << logregThr_;
+        paramStream.close();
+      }
       std::ofstream paramStream(paramPath);
       paramStream << bestLmWeight_ << " " << besWordScore_ << " " << bestWer;
       paramStream.close();
@@ -450,7 +579,6 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
                 << ", wordscore - " << besWordScore_ << ". WER: " << bestWer;
     }
   }
-
   /* 3. pseudo label generation */
   else {
     // 3.0 create dataset
@@ -504,9 +632,23 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
       float bestWer = -1;
       paramStream >> bestLmWeight_ >> besWordScore_ >> bestWer;
       paramStream.close();
-
       LOG(INFO) << "Best parameter: lmweight - " << bestLmWeight_
                 << ", wordscore - " << besWordScore_ << ". WER: " << bestWer;
+    }
+    if (FLAGS_google_filt) {
+      std::ifstream paramStream(pathsConcat(plDir, "google.lst"));
+      float alpha, beta, sigma;
+      paramStream >> alpha >>  beta >> sigma;
+      lengthFitParams_ = {alpha, beta, sigma};
+      paramStream.close();
+    }
+    af::array xMean, xStd;
+    if (FLAGS_logreg_filt) {
+      W2lSerializer::load(pathsConcat(plDir, "logreg.bin"), logreg_, xMean, xStd);
+      logreg_->eval();
+      std::ifstream paramStream(pathsConcat(plDir, "logreg.lst"));
+      paramStream >> logregThr_;
+      paramStream.close();
     }
 
     // 3.4 decode unlabeled data + write
@@ -524,7 +666,7 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
       std::vector<BeamElement> beam;
       std::string savePath = pathsConcat(FLAGS_emission_dir, sampleId + ".bin");
       W2lSerializer::load(savePath, beam);
-      std::remove(savePath.c_str());
+      // std::remove(savePath.c_str());
 
       std::sort(
           beam.begin(),
@@ -631,6 +773,32 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
             (beam[0].trans.size() < (fitK * 35000 - shift) / 35000 * duration + fitB)) {
           filterSample = true;
         }
+      } else if (FLAGS_google_filt) {
+        if (lengthFitParams_.size() != 3) {
+          LOG(INFO) << "Google filtering error:len of params " << lengthFitParams_.size();
+          throw std::runtime_error("Google filt params are not set for use ");
+        }
+        float filtval = (beam[0].amScore + bestLmWeight_ * beam[0].lmScore -
+          lengthFitParams_[0] * beam[0].trans.size() - lengthFitParams_[1]) / 
+          std::pow(beam[0].trans.size(), 0.5) / lengthFitParams_[2];
+        if (filtval < FLAGS_google_thr) {
+          filterSample = true;
+        }
+      } else if (FLAGS_logreg_filt){
+        logreg_->eval();
+        std::vector<float> input = {
+          (float)beam[0].amScore, 
+          (float)beam[0].lmScore, 
+          (float)beam[0].trans.size(), 
+          (float)sample[kInputIdx].dims(0)};
+        af::array inputArray = af::array(af::dim4(4, 1), input.data());
+        inputArray = (inputArray - xMean) / xStd;
+        auto output = -1 * logreg_->forward(fl::input(inputArray));
+        auto maxComponent = fl::max(0, output);
+        auto logprob = -1 * maxComponent  - fl::log(fl::exp(-1 * maxComponent) + fl::exp(output - maxComponent));
+        if (logprob.array().scalar<float>() < logregThr_) {
+          filterSample = true;
+        }
       }
       if (distance <= filteringWER_ && pplValue <= filteringPPL_ && !filterSample) {
         nlStream << sampleId << " " << metaInfo[sampleId] << " "
@@ -638,7 +806,7 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
       } 
       nlStreamFiltered << sampleId << " " << metaInfo[sampleId] << " "
               << distance << " " << pplValue << " " << isGood <<  " " 
-              << beam[0].amScore << " " << join(" ", wordTargetStr)
+              << beam[0].amScore << " " << filterSample << " " << join(" ", wordTargetStr)
               << " | " << join(" ", beam[0].trans) << std::endl;
     }
     nlStreamFiltered.close();
@@ -704,7 +872,7 @@ std::shared_ptr<Decoder> PLGenerator::buildDecoder(
             << "[Decoder] LexiconSeq2Seq decoder with token-LM loaded";
       } else {
         decoder.reset(new LexiconFreeSeq2SeqDecoder(
-            decoderOpt, lm_, eosIdx, amUpdateFunc, FLAGS_maxdecoderoutputlen));
+            decoderOpt, lm_, eosIdx, amUpdateFunc, FLAGS_maxdecoderoutputlen, tokenDict_));
         LOG_MASTER(INFO)
             << "[Decoder] LexiconFreeSeq2Seq decoder with token-LM loaded";
       }
@@ -775,7 +943,18 @@ std::vector<BeamElement> PLGenerator::generateBeam(
     const std::shared_ptr<fl::Module>& ntwrk,
     std::shared_ptr<Decoder> decoder) {
   // 1. Load Emissions
-  auto rawEmission = ntwrk->forward({fl::input(sample[kInputIdx])}).front();
+  auto flInput = fl::input(sample[kInputIdx]);
+  if (FLAGS_ipl_saug) {
+    auto saug = std::make_shared<SpecAugment>(
+        FLAGS_filterbanks,
+        FLAGS_saug_fmaskf,
+        FLAGS_saug_fmaskn,
+        FLAGS_saug_tmaskt,
+        FLAGS_saug_tmaskp,
+        FLAGS_saug_tmaskn);
+    flInput = saug->forward(flInput);
+  }
+  auto rawEmission = ntwrk->forward({flInput}).front();
   auto emission = afToVector<float>(rawEmission);
   int N = rawEmission.dims(0);
   int T = rawEmission.dims(1);
@@ -794,7 +973,25 @@ std::vector<BeamElement> PLGenerator::generateBeam(
   }
 
   // 3. Decode
-  const auto& beam = decoder->decode(emission.data(), T, N);
+  int predLength = -1;
+  if (lengthNtwk_) {
+    // 2 x T x B
+    lengthNtwk_->eval();
+    auto result = lengthNtwk_->forward({flInput}).front(); 
+    af::array indices, maxTmp;
+    af::max(maxTmp, indices, result.array(), 0);
+    auto predLengthRaw = af::flat(indices).host<unsigned int>();
+    predLength = 0;
+    auto predToken = predLengthRaw[0];
+    for (int index = 1; index < indices.dims(1); index++) {
+      if (predLengthRaw[index] != predToken) {
+        predLength += predToken == 0; // count word
+        predToken = predLengthRaw[index];
+      }
+    }
+    predLength += predToken == 0; // count word
+  }
+  const auto& beam = decoder->decode(emission.data(), T, N, predLength);
 
   std::vector<BeamElement> res;
   int nSamples = std::min((int)FLAGS_tr_nbest, (int)beam.size());
