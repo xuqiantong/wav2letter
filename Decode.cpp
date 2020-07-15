@@ -548,11 +548,11 @@ int main(int argc, char** argv) {
                      &sliceTime](int tid) {
     try {
       // TR LM
-      af::setDevice(0);
       std::shared_ptr<fl::Module> tr_lm;
       std::shared_ptr<fl::Module> tr_criterion;
       Dictionary tr_dict;
       if (FLAGS_is_rescore) {
+        af::setDevice(0);
         W2lSerializer::load(FLAGS_tr_lm, tr_lm, tr_criterion);
         tr_lm->eval();
         tr_criterion->eval();
@@ -821,44 +821,45 @@ int main(int argc, char** argv) {
 
   auto startThreadsAndJoin = [&runAmForward, &runDecoder](
                                  int nAmThreads, int nDecoderThreads) {
-    // // We have to run AM forwarding and decoding in sequential to avoid GPU
-    // // OOM with two large neural nets.
-    // if (FLAGS_lmtype == "convlm") {
-    //   // 1. AM forwarding
-    //   {
-    //     fl::ThreadPool threadPool(nAmThreads);
-    //     for (int i = 0; i < nAmThreads; i++) {
-    //       threadPool.enqueue(runAmForward, i);
-    //     }
-    //   }
-    //   // 2. Decoding
-    //   {
-    //     fl::ThreadPool threadPool(nDecoderThreads);
-    //     for (int i = 0; i < nDecoderThreads; i++) {
-    //       threadPool.enqueue(runDecoder, i);
-    //     }
-    //   }
-    // }
-    // // Non-convLM decoding. AM forwarding and decoding can be run in parallel.
-    // else {
-    //   fl::ThreadPool threadPool(nAmThreads + nDecoderThreads);
-    //   // AM forwarding threads
-    //   for (int i = 0; i < nAmThreads; i++) {
-    //     threadPool.enqueue(runAmForward, i);
-    //   }
-    //   // Decoding threads
-    //   for (int i = 0; i < nDecoderThreads; i++) {
-    //     threadPool.enqueue(runDecoder, i);
-    //   }
-    // }
-
-    LOG(INFO) << "Emission generated";
-    {
-      fl::ThreadPool threadPool(nDecoderThreads + 1);
+    if (FLAGS_is_rescore) {
+      LOG(INFO) << "Emission generated";
+      {
+        fl::ThreadPool threadPool(nDecoderThreads + 1);
+        for (int i = 0; i < nDecoderThreads; i++) {
+          threadPool.enqueue(runDecoder, i);
+        }
+        threadPool.enqueue(runAmForward, nDecoderThreads);
+      }
+    }
+    // We have to run AM forwarding and decoding in sequential to avoid GPU
+    // OOM with two large neural nets.
+    else if (FLAGS_lmtype == "convlm") {
+      // 1. AM forwarding
+      {
+        fl::ThreadPool threadPool(nAmThreads);
+        for (int i = 0; i < nAmThreads; i++) {
+          threadPool.enqueue(runAmForward, i);
+        }
+      }
+      // 2. Decoding
+      {
+        fl::ThreadPool threadPool(nDecoderThreads);
+        for (int i = 0; i < nDecoderThreads; i++) {
+          threadPool.enqueue(runDecoder, i);
+        }
+      }
+    }
+    // Non-convLM decoding. AM forwarding and decoding can be run in parallel.
+    else {
+      fl::ThreadPool threadPool(nAmThreads + nDecoderThreads);
+      // AM forwarding threads
+      for (int i = 0; i < nAmThreads; i++) {
+        threadPool.enqueue(runAmForward, i);
+      }
+      // Decoding threads
       for (int i = 0; i < nDecoderThreads; i++) {
         threadPool.enqueue(runDecoder, i);
       }
-      threadPool.enqueue(runAmForward, nDecoderThreads);
     }
   };
   auto timer = fl::TimeMeter();
