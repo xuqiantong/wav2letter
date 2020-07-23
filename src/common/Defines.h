@@ -333,6 +333,7 @@ DECLARE_int64(decoder_length_delta);
 DECLARE_string(decoder_length_model);
 DECLARE_int64(input_rand_shift);
 DECLARE_bool(start_swa);
+DECLARE_bool(epoch_reduce);
 
 /* ========== FB SPECIFIC ========== */
 DECLARE_string(target);

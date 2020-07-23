@@ -266,10 +266,12 @@ int main(int argc, char** argv) {
   int nSWAModels = 1;
   if (FLAGS_start_swa) {
     for (size_t i = 0; i < network->params().size(); ++i) {
-      swaNetworkParams.push_back(network->params()[i].array() + 0);
+      swaNetworkParams.push_back(network->params()[i].array());
+      swaNetworkParams[i].eval();
     }
     for (size_t i = 0; i < criterion->params().size(); ++i) {
-      swaCriterionParams.push_back(criterion->params()[i].array() + 0);
+      swaCriterionParams.push_back(criterion->params()[i].array());
+      swaCriterionParams[i].eval();
     }
   }
 
@@ -422,25 +424,24 @@ int main(int argc, char** argv) {
       if (FLAGS_start_swa) {
         filename =
             getRunFile(format("model_swa_%03d.bin", iter), runIdx, runPath);
-        std::vector<af::array> tmpN;
-        std::vector<af::array> tmpC;
+        std::vector<fl::Variable> tmpN, tmpC;
         for (size_t i = 0; i < network->params().size(); ++i) {
-          tmpN.push_back(network->param(i).array());
+          tmpN.push_back(network->param(i));
           network->setParams(fl::Variable(swaNetworkParams[i], false), i);
         }
         for (size_t i = 0; i < criterion->params().size(); ++i) {
-          tmpC.push_back(criterion->param(i).array());
+          tmpC.push_back(criterion->param(i));
           criterion->setParams(fl::Variable(swaCriterionParams[i], false), i);
         }
 
         W2lSerializer::save(
-            filename, config, network, criterion, netoptim, critoptim, plGenerator);
+            filename, config, network, criterion, netoptim, critoptim, plGenerator, nSWAModels);
 
         for (size_t i = 0; i < network->params().size(); ++i) {
-          network->setParams(fl::Variable(tmpN[i], true), i);
+          network->setParams(tmpN[i], i);
         }
         for (size_t i = 0; i < criterion->params().size(); ++i) {
-          criterion->setParams(fl::Variable(tmpC[i], true), i);
+          criterion->setParams(tmpC[i], i);
         }
         tmpN.clear();
         tmpC.clear();
@@ -466,7 +467,7 @@ int main(int argc, char** argv) {
   std::map<std::string, std::shared_ptr<W2lDataset>> validds;
   for (const auto& s : validTagSets) {
     validds[s.first] = createDataset(
-        s.second, dicts, lexicon, FLAGS_batchsize, worldRank, worldSize);
+        s.second, dicts, lexicon, 1, worldRank, worldSize);
   }
 
   /* ===================== Hooks ===================== */
@@ -637,6 +638,13 @@ int main(int argc, char** argv) {
 
     while (curBatch < nbatches) {
       ++curEpoch; // counts partial epochs too!
+      if (FLAGS_epoch_reduce) {
+        LOG(INFO) << "Sync model, criterion and optimizer for new epoch " << curEpoch;
+        fl::allReduceParameters(ntwrk);
+        fl::allReduceParameters(crit);
+        netopt->allReduce(1.0 / fl::getWorldSize());
+        critopt->allReduce(1.0 / fl::getWorldSize());
+      }
       int epochsAfterDecay = curEpoch - FLAGS_lr_decay;
       double lrScale =
           std::pow(0.5, std::max(epochsAfterDecay, 0) / FLAGS_lr_decay_step);
@@ -646,7 +654,7 @@ int main(int argc, char** argv) {
         resetTimeStatMeters();
       }
       if (!FLAGS_noresample) {
-        LOG_MASTER(INFO) << "Shuffling trainset";
+        LOG(INFO) << "Shuffling trainset";
         trainset->shuffle(curEpoch /* seed */);
       }
       af::sync();

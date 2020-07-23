@@ -373,6 +373,8 @@ DEFINE_int64(decoder_length_delta, 0, "s2s decoder length delta");
 DEFINE_string(decoder_length_model, "", "model to predict length");
 DEFINE_int64(input_rand_shift, 0, "Max number of frames by which the input can get shifted by");
 DEFINE_bool(start_swa, false, "apply model averaging across updates, save on each epoch");
+DEFINE_bool(epoch_reduce, false, "do NN and criterion, and optimizer sync at the beginning of each epoch");
+
 
 // FB SPECIFIC
 DEFINE_string(target, "tkn", "target feature");
