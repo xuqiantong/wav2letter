@@ -201,6 +201,9 @@ int main(int argc, char** argv) {
   if (FLAGS_eostoken) {
     tokenDict.addEntry(kEosToken);
   }
+  if (FLAGS_padfix) {
+    tokenDict.addEntry("<PAD>");
+  }
 
   int numClasses = tokenDict.indexSize();
   LOG(INFO) << "Number of classes (network): " << numClasses;

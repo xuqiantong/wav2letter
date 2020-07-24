@@ -6,8 +6,10 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include "common/FlashlightUtils.h"
 #include "ContentAttention.h"
 #include <cmath>
+#include <iostream>
 
 using namespace fl;
 
@@ -32,9 +34,16 @@ std::pair<Variable, Variable> ContentAttention::forward(
   if (!attnWeight.isempty()) {
     innerProd = innerProd + log(attnWeight);
   }
+  if (FLAGS_mydebug) {
+    std::cout << "cut attention " << innerProd.dims() << std::endl;
+    af::array mask = af::constant(0, innerProd.dims());
+    mask(af::span, af::seq(67, innerProd.dims(1) - 1), af::span) = -std::numeric_limits<float>::infinity();
+    innerProd = innerProd + fl::Variable(mask, false);
+  }
 
   // [targetlen, seqlen, batchsize]
   auto attention = softmax(innerProd, 1);
+  // af::print("attention", attention.array(), 7);
 
   // [hiddendim, targetlen, batchsize]
   auto summaries = matmulNT(values, attention);

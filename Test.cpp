@@ -107,6 +107,9 @@ int main(int argc, char** argv) {
   if (FLAGS_eostoken) {
     tokenDict.addEntry(kEosToken);
   }
+  if (FLAGS_padfix) {
+    tokenDict.addEntry("<PAD>");
+  }
 
   int numClasses = tokenDict.indexSize();
   LOG(INFO) << "Number of classes (network): " << numClasses;
@@ -131,7 +134,7 @@ int main(int argc, char** argv) {
       0 /* worldrank */,
       1 /* worldsize */);
 
-  ds->shuffle(3);
+  // ds->shuffle(3);
   int nSamples = ds->size();
   if (FLAGS_maxload > 0) {
     nSamples = std::min(nSamples, FLAGS_maxload);
@@ -213,6 +216,7 @@ int main(int argc, char** argv) {
 
     TestMeters meters;
     meters.timer.resume();
+    bool logging = true;
     while (datasetSampleId < nSamples) {
       std::vector<af::array> sample;
       {
@@ -220,8 +224,52 @@ int main(int argc, char** argv) {
         sample = ds->get(datasetSampleId);
         datasetSampleId++;
       }
+      // if (logging) {
+      //   auto tmp = fl::input(sample[kInputIdx]);
+      //   af::print("input", tmp.array());
+        // int index = 0;
+        // std::shared_ptr<fl::Sequential> localNetworkCast = std::dynamic_pointer_cast<fl::Sequential>(localNetwork);
+        // for (auto module : localNetworkCast->modules()) {
+        //   tmp = module->forward({tmp}).front();
+        //   af::print(("tmp" + std::to_string(index)).c_str(), tmp.array());
+        //   index++;
+        // }
+        // logging = false;
+      // }
+      // auto inp = fl::input(sample[kInputIdx]);
+      // auto out1 = fl::reorder(fl::reorder(inp, 3, 0, 1, 2).row(0), 1, 2, 3, 0);
+      // int index = 0;
+      // std::shared_ptr<fl::Sequential> localNetworkCast = std::dynamic_pointer_cast<fl::Sequential>(localNetwork);
+      //   for (auto module : localNetworkCast->modules()) {
+      //     if (std::dynamic_pointer_cast<fl::LayerNorm>(module) != nullptr && index < 4) {
+      //       int s = 267;
+      //       if (index > 1) {
+      //         s = 267 / 2;
+      //       }
+      //       LOG(INFO) << s << " " << out1.dims(0);
+      //       auto a1 = fl::reorder(out1.rows(0, s), 1, 0);
+      //       a1 = fl::reorder(a1, 1, 0);
+      //       auto a2 =  fl::reorder(out1.rows(s + 1, out1.dims(0) - 1), 1, 0);
+      //       a2 = fl::reorder(a2, 1, 0);
+      //       auto tmp = module->forward({a1}).front();
+      //       out1 = fl::concatenate({tmp, a2}, 0);
+      //       index++;
+      //     } else {
+      //       out1 = module->forward({out1}).front();
+      //     }
+      //   }
+      // auto out1 = localNetwork->forward({fl::input(sample[kInputIdx]).row(0)}).front();
+      // auto out2 = fl::reorder(fl::reorder(inp, 3, 0, 1, 2).row(1), 1, 2, 3, 0);
+      // out2 = localNetwork->forward({out2}).front();
+      // auto rawEmissionBatch = fl::concatenate({out1, out2}, 2);
       auto rawEmissionBatch =
           localNetwork->forward({fl::input(sample[kInputIdx])}).front();
+      // N T B
+      // af::print("min pred", af::min(rawEmissionBatch.array(), 0));
+      // af::print("max pred", af::max(rawEmissionBatch.array(), 0));
+      // af::print("mean pred", af::mean(rawEmissionBatch.array(), 0));
+      // af::print("min mean pred", af::mean(af::min(rawEmissionBatch.array(), 0), 1));
+      // af::print("max mean pred", af::mean(af::max(rawEmissionBatch.array(), 0), 1));
       af::array predLength, predBlanks;
       if (lengthNetwork) {
         // 2 x T x B
@@ -230,6 +278,7 @@ int main(int argc, char** argv) {
         af::max(maxTmp, indices, result.array(), 0);
         predLength = af::moddims(indices, af::dim4(indices.dims(1), indices.dims(2)));
       }
+      // std::cout << "Target sizes:";
       for (int i = 0; i < rawEmissionBatch.dims(2); i++) {
         auto rawEmission = fl::reorder(fl::reorder(rawEmissionBatch, 0, 2, 1).col(i), 0, 2, 1);
         auto emission = afToVector<float>(rawEmission);
@@ -240,12 +289,13 @@ int main(int argc, char** argv) {
         auto sampleId = readSampleIds(sample[kSampleIdx].col(i)).front();
 
         auto letterTarget = tknTarget2Ltr(tokenTarget, tokenDict);
-        std::vector<std::string> wordTargetStr = tkn2Wrd(letterTarget);
-        // if (FLAGS_uselexicon) {
-        //   wordTargetStr = wrdIdx2Wrd(wordTarget, wordDict);
-        // } else {
-        //   wordTargetStr = tkn2Wrd(letterTarget);
-        // }
+        std::vector<std::string> wordTargetStr;// = tkn2Wrd(letterTarget);
+        // std::cout << " " << wordTargetStr.size();
+        if (FLAGS_uselexicon) {
+          wordTargetStr = wrdIdx2Wrd(wordTarget, wordDict);
+        } else {
+          wordTargetStr = tkn2Wrd(letterTarget);
+        }
         int predLengthSample = -1;
         if (lengthNetwork) {
           auto predLengthRaw = predLength.col(i).host<unsigned int>();
@@ -310,6 +360,7 @@ int main(int argc, char** argv) {
           W2lSerializer::save(savePath, emissionUnit);
         }
       }
+      // std::cout << std::endl;
     }
 
     meters.timer.stop();

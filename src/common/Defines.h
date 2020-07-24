@@ -334,6 +334,8 @@ DECLARE_string(decoder_length_model);
 DECLARE_int64(input_rand_shift);
 DECLARE_bool(start_swa);
 DECLARE_bool(epoch_reduce);
+DECLARE_bool(mydebug);
+DECLARE_bool(padfix);
 
 /* ========== FB SPECIFIC ========== */
 DECLARE_string(target);

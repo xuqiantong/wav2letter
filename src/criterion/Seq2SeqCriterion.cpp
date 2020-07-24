@@ -225,8 +225,12 @@ std::vector<Variable> Seq2SeqCriterion::forward(
 
   out = logSoftmax(out, 0); // C x U x B
 
+  int ignoreIndex = -1;
+  if (FLAGS_padfix) {
+    ignoreIndex = eos_ + 1;
+  }
   auto losses = moddims(
-      sum(categoricalCrossEntropy(out, target, ReduceMode::NONE), {0}), -1);
+      sum(categoricalCrossEntropy(out, target, ReduceMode::NONE, ignoreIndex), {0}), -1);
   if (train_ && labelSmooth_ > 0) {
     size_t nClass = out.dims(0);
     auto smoothLoss = moddims(sum(out, {0, 1}), -1);

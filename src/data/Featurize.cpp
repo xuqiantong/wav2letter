@@ -148,8 +148,11 @@ W2lFeatureData featurize(
         tgtFeat.emplace_back(tgtVec);
         maxTgtSize = std::max(maxTgtSize, tgtVec.size());
 
-        int padVal =
-            FLAGS_eostoken ? dict.getIndex(kEosToken) : kTargetPadValue;
+
+        int padVal = kTargetPadValue;
+        if (FLAGS_eostoken) {
+          padVal = FLAGS_padfix ? dict.getIndex("<PAD>") : dict.getIndex(kEosToken);
+        }
         // L X BATCHSZ (Col Major)
         feat.targets[targetType].resize(batchSz * maxTgtSize, padVal);
         feat.targetDims[targetType] = af::dim4(maxTgtSize, batchSz);
