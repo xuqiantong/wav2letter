@@ -26,7 +26,8 @@ std::shared_ptr<W2lDataset> createDataset(
     int worldRank /* = 0 */,
     int worldSize /* = 1 */,
     bool fallback2Ltr /* = true */,
-    bool skipUnk /* = true */) {
+    bool skipUnk /* = true */,
+    bool allowEmpty /* = false */) {
   std::shared_ptr<W2lDataset> ds;
   if (FLAGS_everstoredb) {
 #ifdef W2L_BUILD_FB_DEPENDENCIES
@@ -67,7 +68,8 @@ std::shared_ptr<W2lDataset> createDataset(
         worldSize,
         fallback2Ltr,
         skipUnk,
-        FLAGS_datadir);
+        FLAGS_datadir,
+        allowEmpty);
   }
 
   return ds;

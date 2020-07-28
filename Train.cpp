@@ -268,13 +268,41 @@ int main(int argc, char** argv) {
   std::vector<af::array> swaNetworkParams, swaCriterionParams;
   int nSWAModels = 1;
   if (FLAGS_start_swa) {
-    for (size_t i = 0; i < network->params().size(); ++i) {
-      swaNetworkParams.push_back(network->params()[i].array());
-      swaNetworkParams[i].eval();
-    }
-    for (size_t i = 0; i < criterion->params().size(); ++i) {
-      swaCriterionParams.push_back(criterion->params()[i].array());
-      swaCriterionParams[i].eval();
+    if (FLAGS_start_swa_model != "") {
+      std::shared_ptr<fl::Module> networkDummy;
+      std::shared_ptr<SequenceCriterion> criterionDummy;
+      std::shared_ptr<fl::FirstOrderOptimizer> netoptimDummy;
+      std::shared_ptr<fl::FirstOrderOptimizer> critoptimDummy;
+      std::shared_ptr<PLGenerator> plGeneratorDummy = nullptr;
+      std::unordered_map<std::string, std::string> configDummy;
+      W2lSerializer::load(
+        FLAGS_start_swa_model, 
+        configDummy, 
+        networkDummy, 
+        criterionDummy, 
+        netoptimDummy, 
+        critoptimDummy, 
+        plGeneratorDummy);
+      nSWAModels = 17913;
+      for (size_t i = 0; i < networkDummy->params().size(); ++i) {
+        swaNetworkParams.push_back(networkDummy->params()[i].array());
+        swaNetworkParams[i].eval();
+      }
+      for (size_t i = 0; i < criterionDummy->params().size(); ++i) {
+        swaCriterionParams.push_back(criterionDummy->params()[i].array());
+        swaCriterionParams[i].eval();
+      }
+      networkDummy.reset();
+      criterionDummy.reset();
+    } else {
+      for (size_t i = 0; i < network->params().size(); ++i) {
+        swaNetworkParams.push_back(network->params()[i].array());
+        swaNetworkParams[i].eval();
+      }
+      for (size_t i = 0; i < criterion->params().size(); ++i) {
+        swaCriterionParams.push_back(criterion->params()[i].array());
+        swaCriterionParams[i].eval();
+      }
     }
   }
 
@@ -470,7 +498,7 @@ int main(int argc, char** argv) {
   std::map<std::string, std::shared_ptr<W2lDataset>> validds;
   for (const auto& s : validTagSets) {
     validds[s.first] = createDataset(
-        s.second, dicts, lexicon, 1, worldRank, worldSize);
+        s.second, dicts, lexicon, 1, worldRank, worldSize, true, true, true);
   }
 
   /* ===================== Hooks ===================== */
@@ -528,6 +556,9 @@ int main(int argc, char** argv) {
     mtrs.loss.reset();
 
     for (auto& batch : *testds) {
+      if (batch[kInputIdx].isempty()) {
+        continue;
+      }
       auto output = ntwrk->forward({fl::input(batch[kInputIdx])}).front();
       auto loss =
           crit->forward({output, fl::Variable(batch[kTargetIdx], false)})

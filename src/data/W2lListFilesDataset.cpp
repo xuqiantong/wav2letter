@@ -24,11 +24,13 @@ W2lListFilesDataset::W2lListFilesDataset(
     int worldSize /* = 1 */,
     bool fallback2Ltr /* = false */,
     bool skipUnk /* = false */,
-    const std::string& rootdir /* = "" */)
+    const std::string& rootdir /* = "" */,
+    bool allowEmpty /* false */)
     : W2lDataset(dicts, batchSize, worldRank, worldSize),
       lexicon_(lexicon),
       fallback2Ltr_(fallback2Ltr),
       skipUnk_(skipUnk) {
+  setAllowEmpty(allowEmpty);
   includeWrd_ = (dicts.find(kWordIdx) != dicts.end());
 
   LOG_IF(FATAL, dicts.find(kTargetIdx) == dicts.end())

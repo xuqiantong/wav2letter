@@ -43,6 +43,9 @@ class W2lDataset : public fl::Dataset {
 
   void shuffle(int seed);
 
+  virtual void setAllowEmpty(bool val) {
+    allowEmpty_ = val;
+  }
  protected:
   DictionaryMap dicts_;
 
@@ -52,6 +55,8 @@ class W2lDataset : public fl::Dataset {
   // Note, if worldSize = N, then worldRank should be in [0, N)
   int64_t worldRank_; // The GPU id for which this Dataset is being used
   int64_t worldSize_; // Total number of parallel GPUs/ CPUs used in training
+
+   bool allowEmpty_{false};
 
   // used if FLAGS_nthread > 1
   std::unique_ptr<fl::ThreadPool> threadpool_;
@@ -68,7 +73,8 @@ class BatchPacker {
   virtual ~BatchPacker() {}
   virtual std::vector<std::vector<int64_t>> getBatches(
       int64_t numSamples,
-      int64_t seed) const = 0;
+      int64_t seed,
+      bool allowEmpty = false) const = 0;
 };
 
 // Implementation which packs the samples into batches in Round Robin
@@ -81,7 +87,8 @@ class RoundRobinBatchPacker : public BatchPacker {
   // Use seed < 0, for no shuffling of the samples
   virtual std::vector<std::vector<int64_t>> getBatches(
       int64_t numSamples,
-      int64_t seed) const override;
+      int64_t seed,
+      bool allowEmpty = false) const override;
 
  private:
   int64_t batchSize_;

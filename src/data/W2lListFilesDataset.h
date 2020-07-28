@@ -25,7 +25,8 @@ class W2lListFilesDataset : public W2lDataset {
       int worldSize = 1,
       bool fallback2Ltr = false,
       bool skipUnk = false,
-      const std::string& rootdir = "");
+      const std::string& rootdir = "",
+      bool allowEmpty = false);
 
   ~W2lListFilesDataset() override;
 

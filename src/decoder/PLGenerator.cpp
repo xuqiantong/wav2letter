@@ -82,6 +82,7 @@ void PLGenerator::resetFlags(
   if (plEpochVec_.size() != nPlFileVec.size()) {
     LOG(FATAL) << "plEpochVec wtf?";
   }
+  plUpdateMap_.clear();
   for (int i = 0; i < plEpochVec_.size(); i++) {
     plUpdateMap_[stoi(plEpochVec_[i])] = {stoi(nPlFileVec[i]), false};
   }

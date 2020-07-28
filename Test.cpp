@@ -134,7 +134,7 @@ int main(int argc, char** argv) {
       0 /* worldrank */,
       1 /* worldsize */);
 
-  // ds->shuffle(3);
+  ds->shuffle(3);
   int nSamples = ds->size();
   if (FLAGS_maxload > 0) {
     nSamples = std::min(nSamples, FLAGS_maxload);

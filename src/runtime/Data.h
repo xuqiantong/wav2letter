@@ -34,6 +34,7 @@ std::shared_ptr<W2lDataset> createDataset(
     int worldRank = 0,
     int worldSize = 1,
     bool fallback2Ltr = true,
-    bool skipUnk = true);
+    bool skipUnk = true,
+    bool allowEmpty = false);
 
 } // namespace w2l

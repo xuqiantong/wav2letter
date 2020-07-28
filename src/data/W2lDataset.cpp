@@ -114,22 +114,26 @@ void W2lDataset::shuffle(int seed) {
   RoundRobinBatchPacker shuffler(batchSize_, worldSize_, worldRank_);
   // We shuffle such that calling `get(idx)` from different mpi jobs with same
   // `idx` would return similar length samples
-  sampleBatches_ = shuffler.getBatches(sampleCount_, seed);
+  sampleBatches_ = shuffler.getBatches(sampleCount_, seed, allowEmpty_);
 }
 
 std::vector<std::vector<int64_t>> RoundRobinBatchPacker::getBatches(
     int64_t nSamples,
-    int64_t seed) const {
+    int64_t seed,
+    bool allowEmpty) const {
   // Randomly shuffle the global batch ids
   // global batch is the batch containing all utterances which
   // are processed in 1 iteration
 
-  int64_t nSamplesPerGlobalBatch = worldSize_ * batchSize_;
+  int64_t nSamplesPerGlobalBatch = worldSize_ * batchSize_; 
 
-  int64_t nGlobalBatches = nSamples / nSamplesPerGlobalBatch;
+  int64_t nGlobalBatches = nSamples / nSamplesPerGlobalBatch; 
 
   // Include-last if we can fit atleast one sample for last batch for all ranks
   bool includeLast = (nSamples % nSamplesPerGlobalBatch) >= worldSize_;
+  if (allowEmpty && (nSamples % nSamplesPerGlobalBatch) > 0) {
+    includeLast = true;
+  }
 
   if (includeLast) {
     ++nGlobalBatches;

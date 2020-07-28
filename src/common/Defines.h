@@ -333,9 +333,11 @@ DECLARE_int64(decoder_length_delta);
 DECLARE_string(decoder_length_model);
 DECLARE_int64(input_rand_shift);
 DECLARE_bool(start_swa);
+DECLARE_string(start_swa_model);
 DECLARE_bool(epoch_reduce);
 DECLARE_bool(mydebug);
 DECLARE_bool(padfix);
+// DECLARE_bool(raw_wave);
 
 /* ========== FB SPECIFIC ========== */
 DECLARE_string(target);
