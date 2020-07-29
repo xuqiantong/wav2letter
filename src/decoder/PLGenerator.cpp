@@ -129,6 +129,18 @@ void PLGenerator::resetFlags(
   for (int i = 0; i < rangeVec.size(); i++) {
     eosscoreRange_[i] = stod(rangeVec[i]);
   }
+  if (FLAGS_is_rescore) {
+    W2lSerializer::load(FLAGS_tr_lm, rsLm_, rsCriterion_);
+    rsLm_->eval();
+    rsCriterion_->eval();
+    auto tr_adsm = dynamic_cast<fl::AdaptiveSoftMaxLoss*>(rsCriterion_.get());
+    auto softmax = tr_adsm->getActivation();
+    rsCriterion_ = std::make_shared<fl::AdaptiveSoftMaxLoss>(
+        softmax, fl::ReduceMode::NONE, 1);
+    rsCriterion_->eval();
+
+    loadRsDictionary();
+  }
   if (FLAGS_decoder_length_model != "") {
     std::unordered_map<std::string, std::string> dummyCfg;
     W2lSerializer::load(FLAGS_decoder_length_model, dummyCfg, lengthNtwk_);
@@ -1022,12 +1034,15 @@ std::vector<BeamElement> PLGenerator::generateBeam(
       element.trans = wordPrediction; // TODO: letter length
       element.amScore = beam[j].amScore;
       element.wer = localMeters.werSlice.value()[0];
+      element.lmScore = 0.0;
 
       res.push_back(element);
     }
-    auto lm_scores = getLmScore(batch, rsLm_, rsCriterion_, rsDict_);
-    for (int j = i; j < i + batchsize; j++) {
-      res[j].lmScore = lm_scores[j - i];
+    if (FLAGS_is_rescore) {
+      auto lm_scores = getLmScore(batch, rsLm_, rsCriterion_, rsDict_);
+      for (int j = i; j < i + batchsize; j++) {
+        res[j].lmScore = lm_scores[j - i];
+      }
     }
   }
   return res;

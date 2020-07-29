@@ -42,7 +42,8 @@ class SpecAugment : public fl::UnaryModule {
       int tMaskT,
       float tMaskP,
       int nTMask,
-      MaskingStrategy mStrategy = MaskingStrategy::ZERO);
+      MaskingStrategy mStrategy = MaskingStrategy::ZERO,
+      bool rawWave = false);
 
   fl::Variable forward(const fl::Variable& input) override;
 
@@ -73,11 +74,16 @@ class SpecAugment : public fl::UnaryModule {
   int timeMaskT_;
   float timeMaskP_;
   int numTimeMask_;
-
+  bool rawWave_{false};
+  // int nMels_{80};
+  // int samplingRate_{16000};
+  // std::vector<float> frequencies_;
+    
   std::mt19937 eng_{0};
   MaskingStrategy maskStrategy_;
 
   int generateRandomInt(int low, int high);
+  // af::array lowPassFilter(int freq, af::array wav);
 
   SpecAugment() = default;
 };

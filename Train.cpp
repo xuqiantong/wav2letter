@@ -615,6 +615,8 @@ int main(int argc, char** argv) {
           FLAGS_saug_tmaskt,
           FLAGS_saug_tmaskp,
           FLAGS_saug_tmaskn);
+          // 0,
+          // FLAGS_raw_wave);
     }
 
     fl::allReduceParameters(ntwrk);

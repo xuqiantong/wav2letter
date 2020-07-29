@@ -377,7 +377,7 @@ DEFINE_string(start_swa_model, "", "continue swa model");
 DEFINE_bool(epoch_reduce, false, "do NN and criterion, and optimizer sync at the beginning of each epoch");
 DEFINE_bool(mydebug, false, "debug");
 DEFINE_bool(padfix, false, "use pad index instead of ");
-// DEFINE_bool(raw_wave, false, "raw wave as input");
+DEFINE_bool(raw_wave, false, "raw wave as input");
 
 
 // FB SPECIFIC

@@ -337,7 +337,7 @@ DECLARE_string(start_swa_model);
 DECLARE_bool(epoch_reduce);
 DECLARE_bool(mydebug);
 DECLARE_bool(padfix);
-// DECLARE_bool(raw_wave);
+DECLARE_bool(raw_wave);
 
 /* ========== FB SPECIFIC ========== */
 DECLARE_string(target);
