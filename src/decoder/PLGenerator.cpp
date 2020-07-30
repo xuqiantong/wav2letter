@@ -772,8 +772,13 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
             (beam[0].trans.size() < fitK * duration + fitB - shift)) {
           filterSample = true;
         }
-      } else if (FLAGS_use_band_bird) {
+      } else if (FLAGS_use_band_bird || FLAGS_use_band_bird_ls) {
         double fitK = 0.00269046, fitB = 0.568089959984853, shift = 40;
+        if (FLAGS_use_band_bird_ls) {
+          fitK = 0.00270208;
+          fitB = 0.20230103214401396;
+          shift = 55;
+        }
         double duration = std::stof(splitOnWhitespace(metaInfo[sampleId])[1]);
         if ((FLAGS_use_band_side == 0) && 
             ((beam[0].trans.size() > (fitK * 35000 + shift) / 35000 * duration + fitB) ||

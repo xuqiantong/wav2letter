@@ -321,6 +321,7 @@ DECLARE_double(filtering_wer);
 DECLARE_double(filtering_ppl);
 DECLARE_bool(use_band);
 DECLARE_bool(use_band_bird);
+DECLARE_bool(use_band_bird_ls);
 DECLARE_bool(use_hand_filtering);
 DECLARE_int64(use_band_side);
 DECLARE_bool(google_filt);
