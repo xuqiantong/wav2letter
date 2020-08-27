@@ -36,7 +36,8 @@ std::pair<Variable, Variable> MultiHeadContentAttention::forward(
     const Variable& state,
     const Variable& xEncoded,
     const Variable& /* unused */,
-    const Variable& attnWeight) {
+    const Variable& attnWeight,
+    const Variable&) {
   int hEncode = xEncoded.dims(0);
   int T = xEncoded.dims(1);
   int hState = state.dims(0);
@@ -66,7 +67,7 @@ std::pair<Variable, Variable> MultiHeadContentAttention::forward(
       matmulNT(query, key) / std::sqrt(static_cast<float>(hiddenDim));
 
   if (!attnWeight.isempty()) {
-    innerProd = innerProd + tile(log(attnWeight), {1, 1, numHeads_});
+    innerProd = innerProd + tile(attnWeight, {1, 1, numHeads_});
   }
 
   // [U, T, B * numHeads_]

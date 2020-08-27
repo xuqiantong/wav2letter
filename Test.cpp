@@ -271,6 +271,7 @@ int main(int argc, char** argv) {
       // af::print("min mean pred", af::mean(af::min(rawEmissionBatch.array(), 0), 1));
       // af::print("max mean pred", af::mean(af::max(rawEmissionBatch.array(), 0), 1));
       af::array predLength, predBlanks;
+      af::array batchProportions = sample[kInputProportions];
       if (lengthNetwork) {
         // 2 x T x B
         auto result = lengthNetwork->forward({fl::input(sample[kInputIdx])}).front(); 
@@ -287,6 +288,7 @@ int main(int argc, char** argv) {
         tokenTarget.resize(labellen);
         auto wordTarget = afToVector<int>(sample[kWordIdx].col(i));
         auto sampleId = readSampleIds(sample[kSampleIdx].col(i)).front();
+        auto sampleProportions = batchProportions.row(i);
 
         auto letterTarget = tknTarget2Ltr(tokenTarget, tokenDict);
         std::vector<std::string> wordTargetStr;// = tkn2Wrd(letterTarget);
@@ -313,7 +315,7 @@ int main(int argc, char** argv) {
 
         // Tokens
         auto tokenPrediction =
-            afToVector<int>(localCriterion->viterbiPath(rawEmission.array()));
+            afToVector<int>(localCriterion->viterbiPath(rawEmission.array(), fl::input(sampleProportions)));
         auto letterPrediction = tknPrediction2Ltr(tokenPrediction, tokenDict);
 
         meters.lerSlice.add(letterPrediction, letterTarget);

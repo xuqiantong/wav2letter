@@ -22,7 +22,7 @@ class SoftPretrainWindow : public WindowBase {
       int batchSize,
       int step) override;
 
-  fl::Variable computeWindowMask(int targetLen, int inputSteps, int batchSize)
+  fl::Variable computeWindowMask(int targetLen, int inputSteps, int batchSize, const af::array& inputProportions, const af::array& targetSizes)
       override;
 
  private:

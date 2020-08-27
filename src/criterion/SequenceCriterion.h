@@ -18,7 +18,7 @@ class SequenceCriterion : public fl::Container {
  public:
   // Find the most likely path through input using viterbi algorithm
   // https://en.wikipedia.org/wiki/Viterbi_algorithm
-  virtual af::array viterbiPath(const af::array& input) = 0;
+  virtual af::array viterbiPath(const af::array& input, const fl::Variable& inputProportions) = 0;
 
   // Finds the most likely path using viterbi algorithm that is constrained to
   // go through target

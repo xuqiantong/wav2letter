@@ -22,6 +22,7 @@ typedef std::unordered_map<int, std::vector<int>> TargetFeatMap;
 
 struct W2lFeatureData {
   std::vector<float> input;
+  std::vector<float> inputProportions;
   TargetFeatMap targets;
   af::dim4 inputDims;
   DimsMap targetDims;

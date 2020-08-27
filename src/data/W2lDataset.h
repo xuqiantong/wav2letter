@@ -95,4 +95,25 @@ class RoundRobinBatchPacker : public BatchPacker {
   int64_t worldSize_;
   int64_t worldRank_;
 };
+
+// Implementation which packs the samples into batches in Round Robin with random removing samples which not fit 
+// order.
+class RoundRobinBatchPackerRandomSamples : public BatchPacker {
+ public:
+  RoundRobinBatchPackerRandomSamples(int64_t batchSize, int64_t worldSize, int64_t worldRank, bool shuffle)
+      : batchSize_(batchSize), worldSize_(worldSize), worldRank_(worldRank), shuffle_(shuffle) {}
+
+  // Use seed < 0, for no shuffling of the samples
+  virtual std::vector<std::vector<int64_t>> getBatches(
+      int64_t numSamples,
+      int64_t seed,
+      bool allowEmpty = false) const override;
+
+ private:
+  int64_t batchSize_;
+  int64_t worldSize_;
+  int64_t worldRank_;
+  bool shuffle_;
+};
+
 } // namespace w2l

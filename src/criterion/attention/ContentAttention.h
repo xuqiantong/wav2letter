@@ -20,7 +20,8 @@ class ContentAttention : public AttentionBase {
       const fl::Variable& state,
       const fl::Variable& xEncoded,
       const fl::Variable& prevAttn,
-      const fl::Variable& attnWeight) override;
+      const fl::Variable& attnWeight,
+      const fl::Variable& inputProportions) override;
 
   std::string prettyString() const override;
 
@@ -39,7 +40,8 @@ class NeuralContentAttention : public AttentionBase {
       const fl::Variable& state,
       const fl::Variable& xEncoded,
       const fl::Variable& prevAttn,
-      const fl::Variable& attnWeight) override;
+      const fl::Variable& attnWeight,
+      const fl::Variable& inputProportions) override;
 
   std::string prettyString() const override;
 

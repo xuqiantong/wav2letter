@@ -374,11 +374,20 @@ DEFINE_int64(decoder_length_delta, 0, "s2s decoder length delta");
 DEFINE_string(decoder_length_model, "", "model to predict length");
 DEFINE_int64(input_rand_shift, 0, "Max number of frames by which the input can get shifted by");
 DEFINE_bool(start_swa, false, "apply model averaging across updates, save on each epoch");
+DEFINE_string(start_swa_type, "avg", "averaging: avg, ema: exp averaging with decay 0.9999");
 DEFINE_string(start_swa_model, "", "continue swa model");
 DEFINE_bool(epoch_reduce, false, "do NN and criterion, and optimizer sync at the beginning of each epoch");
 DEFINE_bool(mydebug, false, "debug");
-DEFINE_bool(padfix, false, "use pad index instead of ");
+DEFINE_bool(padfix, false, "use pad index instead of eos");
+DEFINE_bool(padfix2, false, "use pad index instead of eos: fix for smoothloss");
 DEFINE_bool(raw_wave, false, "raw wave as input");
+DEFINE_bool(attention_mask, false, "mask attention properly");
+DEFINE_bool(attention_mask2, false, "mask attention properly in pretraining too");
+DEFINE_bool(use_new_batching, false,
+ "use new batching when random samples which don't fit are removed before batch creation");
+DEFINE_bool(use_new_batching_random, false, "random shuffle data");
+DEFINE_bool(padfixnorm, false, "don't use padded samples in the input normalization");
+DEFINE_bool(fixed_transformer, false, "use transformer block pad mask");
 
 
 // FB SPECIFIC

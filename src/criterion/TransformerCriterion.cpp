@@ -114,27 +114,63 @@ TransformerCriterion::TransformerCriterion(
   params_.push_back(fl::uniform(af::dim4{hiddenDim}, -1e-1, 1e-1));
 }
 
+Variable applyMask(
+    const Variable& input,
+    const af::array& mask) {
+  af::array output = af::flat(input.array());
+  af::array flatMask = af::flat(mask);
+  auto inputDims = input.dims();
+
+  output(flatMask) = 0;
+  output = af::moddims(output, inputDims);
+  
+  auto gradFunc =
+      [flatMask, inputDims](std::vector<Variable>& inputs, const Variable& gradOutput) {
+        af::array gradArray = af::flat(gradOutput.array());
+        gradArray(flatMask) = 0.;
+        auto grad = Variable(af::moddims(gradArray, inputDims), false);
+        inputs[0].addGrad(grad);
+      };
+  return Variable(output, {input.withoutData()}, gradFunc);
+}
+
 std::vector<Variable> TransformerCriterion::forward(
     const std::vector<Variable>& inputs) {
-  if (inputs.size() != 2) {
+  if (inputs.size() != 3) {
     throw std::invalid_argument("Invalid inputs size");
   }
   const auto& input = inputs[0];
   const auto& target = inputs[1];
-
-  Variable out, alpha;
-  std::tie(out, alpha) = vectorizedDecoder(input, target);
-
-  out = logSoftmax(out, 0);
+  const auto& inputProportions = inputs[2];
 
   int ignoreIndex = -1;
   if (FLAGS_padfix) {
     ignoreIndex = eos_ + 1;
   }
+  
+  af::array targetSizes = af::moddims(af::sum((target.array() != ignoreIndex).as(s32), 0), af::dim4(target.dims(1)));
+
+  Variable out, alpha;
+  std::tie(out, alpha) = vectorizedDecoder(input, target, inputProportions, targetSizes);
+
+  out = logSoftmax(out, 0);
   auto losses = moddims(
       sum(categoricalCrossEntropy(out, target, ReduceMode::NONE, ignoreIndex), {0}), -1);
+  // if (FLAGS_use_new_batching_random) {
+  //   auto normalization = af::sum((af::flat(target.array()) != ignoreIndex).as(s32), 0).scalar<int>();
+  //   if (normalization < 1) {
+  //     losses = losses * 0;
+  //   } else {
+  //     losses = losses / normalization;
+  //   }
+  // }
   if (train_ && labelSmooth_ > 0) {
     size_t nClass = out.dims(0);
+    if (FLAGS_padfix2) {
+      auto mask = af::tile(af::moddims(target.array(), af::dim4(1, target.dims(0), target.dims(1))), nClass) == ignoreIndex;
+      out = applyMask(out, mask);
+    }
+
     auto smoothLoss = moddims(sum(out, {0, 1}), -1);
     losses = (1 - labelSmooth_) * losses - (labelSmooth_ / nClass) * smoothLoss;
   }
@@ -147,7 +183,9 @@ std::vector<Variable> TransformerCriterion::forward(
 
 std::pair<Variable, Variable> TransformerCriterion::vectorizedDecoder(
     const Variable& input,
-    const Variable& target) {
+    const Variable& target,
+    const Variable& inputProportions,
+    const af::array& targetSizes) {
   int U = target.dims(0);
   int B = target.dims(1);
   int T = input.isempty() ? 0 : input.dims(1);
@@ -171,33 +209,34 @@ std::pair<Variable, Variable> TransformerCriterion::vectorizedDecoder(
   }
 
   Variable alpha, summaries;
+  af::array padMask; // no mask, decoder is not looking into future
   for (int i = 0; i < nLayer_; i++) {
-    hy = layer(i)->forward(std::vector<Variable>({hy})).front();
+    hy = layer(i)->forward(std::vector<Variable>({hy, fl::noGrad(padMask)})).front();
   }
-
   if (!input.isempty()) {
     Variable windowWeight;
     if (window_ && (!train_ || trainWithWindow_)) {
-      windowWeight = window_->computeWindowMask(U, T, B);
+      windowWeight = window_->computeWindowMask(U, T, B, inputProportions.array(), targetSizes);
     }
 
     std::tie(alpha, summaries) =
-        attention()->forward(hy, input, Variable(), windowWeight);
+        attention()->forward(hy, input, Variable(), windowWeight, inputProportions);
 
     hy = hy + summaries;
   }
-
   auto out = linearOut()->forward(hy);
-
   return std::make_pair(out, alpha);
 }
 
-af::array TransformerCriterion::viterbiPath(const af::array& input) {
-  return viterbiPathBase(input, false).first;
+af::array TransformerCriterion::viterbiPath(
+  const af::array& input, 
+  const fl::Variable& inputProportions) {
+  return viterbiPathBase(input, inputProportions, false).first;
 }
 
 std::pair<af::array, Variable> TransformerCriterion::viterbiPathBase(
     const af::array& input,
+    const fl::Variable& inputProportions,
     bool /* TODO: saveAttn */) {
   bool wasTrain = train_;
   eval();
@@ -210,7 +249,7 @@ std::pair<af::array, Variable> TransformerCriterion::viterbiPathBase(
   int pred;
 
   for (int u = 0; u < maxDecoderOutputLen_; u++) {
-    std::tie(ox, state) = decodeStep(Variable(input, false), y, state);
+    std::tie(ox, state) = decodeStep(Variable(input, false), y, state, inputProportions);
     max(maxValues, maxIdx, ox.array());
     maxIdx.host(&pred);
     // TODO: saveAttn
@@ -234,7 +273,8 @@ std::pair<af::array, Variable> TransformerCriterion::viterbiPathBase(
 std::pair<Variable, TS2SState> TransformerCriterion::decodeStep(
     const Variable& xEncoded,
     const Variable& y,
-    const TS2SState& inState) const {
+    const TS2SState& inState,
+    const Variable& inputProportions) const {
   size_t stepSize = fl::afGetMemStepSize();
   fl::afSetMemStepSize(100 * (1 << 10));
 
@@ -249,14 +289,15 @@ std::pair<Variable, TS2SState> TransformerCriterion::decodeStep(
 
   TS2SState outState;
   outState.step = inState.step + 1;
+  af::array padMask; // no mask because we are doing step by step decoding here
   for (int i = 0; i < nLayer_; i++) {
     if (inState.step == 0) {
+      std::cout << " decoder step 0" << std::endl;
       outState.hidden.push_back(hy);
-      hy = layer(i)->forward(std::vector<Variable>({hy})).front();
+      hy = layer(i)->forward(std::vector<Variable>({hy, fl::noGrad(padMask)})).front();
     } else {
-      auto tmp = std::vector<Variable>({inState.hidden[i], hy});
-      outState.hidden.push_back(concatenate(tmp, 1));
-      hy = layer(i)->forward(tmp).front();
+      outState.hidden.push_back(concatenate({inState.hidden[i], hy}, 1));
+      hy = layer(i)->forward({inState.hidden[i], hy, fl::noGrad(padMask)}).front();
     }
   }
 
@@ -267,7 +308,7 @@ std::pair<Variable, TS2SState> TransformerCriterion::decodeStep(
   }
 
   std::tie(alpha, summary) =
-      attention()->forward(hy, xEncoded, Variable(), windowWeight);
+      attention()->forward(hy, xEncoded, Variable(), windowWeight, inputProportions);
 
   hy = hy + summary;
 

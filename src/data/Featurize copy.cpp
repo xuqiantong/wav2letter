@@ -51,15 +51,11 @@ W2lFeatureData featurize(
   auto batchSz = data.size();
   W2lFeatureData feat;
   std::vector<std::string> sampleIds;
-  std::vector<float> inputProportions;
 
   // Featurize Input
   size_t maxInSize = 0;
   for (const auto& d : data) {
     maxInSize = std::max(maxInSize, d.input.size());
-  }
-  for (const auto& d : data) {
-    inputProportions.push_back(d.input.size() / float(maxInSize));
   }
   int64_t T = maxInSize / FLAGS_channels;
 
@@ -79,7 +75,6 @@ W2lFeatureData featurize(
   auto inFeat =
       transpose2d<float>(std::move(mergedInput), T, FLAGS_channels, batchSz);
   feat.inputDims = af::dim4(T, FLAGS_channels, 1, batchSz);
-  feat.inputProportions = inputProportions;
   if (FLAGS_pow || FLAGS_mfsc || FLAGS_mfcc) {
     if ((FLAGS_mfcc && FLAGS_mfsc) || (FLAGS_pow && FLAGS_mfsc) ||
         (FLAGS_mfcc && FLAGS_pow)) {
@@ -111,7 +106,7 @@ W2lFeatureData featurize(
   if (FLAGS_localnrmlleftctx > 0 || FLAGS_localnrmlrightctx > 0) {
     feat.input = localNormalize(
         inFeat, FLAGS_localnrmlleftctx, FLAGS_localnrmlrightctx, T, batchSz);
-  } else if (FLAGS_padfixnorm) {
+  } else {
     std::vector<int> inputSizes;
     for (const auto& d : data) {
       if (FLAGS_pow || FLAGS_mfsc || FLAGS_mfcc) {
@@ -119,12 +114,11 @@ W2lFeatureData featurize(
       } else {
         inputSizes.push_back(d.input.size() * feat.inputDims[1]);
       }
-    }
+      // inputSizes.push_back(inFeat.size() / batchSz);
+    } 
     inFeat = transpose2d<float>(inFeat, feat.inputDims[1], feat.inputDims[0], feat.inputDims[2] * feat.inputDims[3]);
-    feat.input = normalizeWithSize(inFeat, inputSizes, batchSz);
+    feat.input = normalize(inFeat, inputSizes, batchSz);
     feat.input = transpose2d<float>(feat.input, feat.inputDims[0], feat.inputDims[1], feat.inputDims[2] * feat.inputDims[3]);
-  } else {
-    feat.input = normalize(inFeat, batchSz);
   }
 
   // Featurize Target
@@ -165,11 +159,8 @@ W2lFeatureData featurize(
         tgtFeat.emplace_back(tgtVec);
         maxTgtSize = std::max(maxTgtSize, tgtVec.size());
 
-
-        int padVal = kTargetPadValue;
-        if (FLAGS_eostoken) {
-          padVal = FLAGS_padfix ? dict.getIndex("<PAD>") : dict.getIndex(kEosToken);
-        }
+        int padVal =
+            FLAGS_eostoken ? dict.getIndex(kEosToken) : kTargetPadValue;
         // L X BATCHSZ (Col Major)
         feat.targets[targetType].resize(batchSz * maxTgtSize, padVal);
         feat.targetDims[targetType] = af::dim4(maxTgtSize, batchSz);

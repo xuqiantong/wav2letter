@@ -23,7 +23,7 @@ Variable MedianWindow::initialize(int inputSteps, int batchSize) {
   maskArray(af::span, af::seq(0, width - 1)) = 1.0;
 
   // [1, inputSteps, batchSize]
-  auto mask = Variable(tile(maskArray, {1, 1, batchSize}), false);
+  auto mask = Variable(tile(af::log(maskArray), {1, 1, batchSize}), false);
 
   return mask;
 }
@@ -61,7 +61,7 @@ Variable MedianWindow::computeSingleStepWindow(
   maskArray(flat(indices)) = 1.0;
 
   // [1, inputSteps, batchSize]
-  auto mask = Variable(maskArray, false);
+  auto mask = Variable(af::log(maskArray), false);
 
   return mask;
 }
@@ -69,7 +69,9 @@ Variable MedianWindow::computeSingleStepWindow(
 Variable MedianWindow::computeWindowMask(
     int /* unused */,
     int /* unused */,
-    int /* unused */) {
+    int /* unused */,
+    const af::array&,
+    const af::array&) {
   throw af::exception("MedianWindow does not support vectorized window mask");
 }
 

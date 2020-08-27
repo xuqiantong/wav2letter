@@ -63,6 +63,9 @@ std::vector<af::array> W2lDataset::get(const int64_t idx) const {
   result[kSampleIdx] = feat.sampleIds.empty()
       ? af::array(feat.sampleIdsDims)
       : af::array(feat.sampleIdsDims, feat.sampleIds.data());
+  result[kInputProportions] = feat.inputProportions.empty()
+      ? af::array(af::dim4(feat.inputProportions.size()))
+      : af::array(af::dim4(feat.inputProportions.size()), feat.inputProportions.data());
   return result;
 }
 
@@ -111,10 +114,15 @@ W2lFeatureData W2lDataset::getFeatureDataAndPrefetch(const int64_t idx) const {
 
 void W2lDataset::shuffle(int seed) {
   prefetchCache_.clear();
-  RoundRobinBatchPacker shuffler(batchSize_, worldSize_, worldRank_);
-  // We shuffle such that calling `get(idx)` from different mpi jobs with same
-  // `idx` would return similar length samples
-  sampleBatches_ = shuffler.getBatches(sampleCount_, seed, allowEmpty_);
+  if (!FLAGS_use_new_batching || allowEmpty_) {
+    RoundRobinBatchPacker shuffler(batchSize_, worldSize_, worldRank_);
+    // We shuffle such that calling `get(idx)` from different mpi jobs with same
+    // `idx` would return similar length samples
+    sampleBatches_ = shuffler.getBatches(sampleCount_, seed, allowEmpty_);
+  } else {
+    RoundRobinBatchPackerRandomSamples shuffler(batchSize_, worldSize_, worldRank_, FLAGS_use_new_batching_random);
+    sampleBatches_ = shuffler.getBatches(sampleCount_, seed, false);
+  }
 }
 
 std::vector<std::vector<int64_t>> RoundRobinBatchPacker::getBatches(
@@ -169,6 +177,54 @@ std::vector<std::vector<int64_t>> RoundRobinBatchPacker::getBatches(
     }
     std::vector<std::int64_t> curBatch(nCurSamples);
     std::iota(curBatch.begin(), curBatch.end(), offset);
+    batches[i] = std::move(curBatch);
+  }
+  return batches;
+}
+
+std::vector<std::vector<int64_t>> RoundRobinBatchPackerRandomSamples::getBatches(
+    int64_t nSamples,
+    int64_t seed,
+    bool allowEmpty) const {
+  // Randomly shuffle the global batch ids
+  // global batch is the batch containing all utterances which
+  // are processed in 1 iteration
+
+  int64_t nSamplesPerGlobalBatch = worldSize_ * batchSize_; 
+
+  int64_t nGlobalBatches = nSamples / nSamplesPerGlobalBatch; 
+  // compute how many samples we can batched together on all machines
+  int64_t nBatchedSamples = nSamplesPerGlobalBatch * nGlobalBatches;
+
+  std::vector<int64_t> globalBatchIdx(nGlobalBatches);
+  std::iota(globalBatchIdx.begin(), globalBatchIdx.end(), 0);
+  std::vector<int64_t> samplesIndices(nSamples);
+  std::iota(samplesIndices.begin(), samplesIndices.end(), 0);
+
+  if (seed >= 0) {
+    auto rng = std::mt19937(seed);
+    auto rngSamples = std::mt19937(seed + 42);
+    auto n = globalBatchIdx.size();
+    // custom implementation of shuffle - https://stackoverflow.com/a/51931164
+    for (auto i = n; i >= 1; --i) {
+      std::swap(globalBatchIdx[i - 1], globalBatchIdx[rng() % n]);
+    }
+    // shuffle samples indices
+    for (auto i = nSamples; i >= 1; --i) {
+      std::swap(samplesIndices[i - 1], samplesIndices[rngSamples() % nSamples]);
+    }
+    if (shuffle_) {
+      // sort only nBatchedSamples which we will use in current epoch, remain part is unused
+      std::sort(samplesIndices.begin(), samplesIndices.begin() + nBatchedSamples);
+    }
+  }
+
+  std::vector<std::vector<int64_t>> batches(nGlobalBatches);
+
+  for (size_t i = 0; i < nGlobalBatches; i++) {
+    auto offset = globalBatchIdx[i] * nSamplesPerGlobalBatch + batchSize_ * worldRank_;
+    std::vector<std::int64_t> curBatch(batchSize_);
+    std::copy(samplesIndices.begin() + offset, samplesIndices.begin() + offset + batchSize_, curBatch.begin());
     batches[i] = std::move(curBatch);
   }
   return batches;

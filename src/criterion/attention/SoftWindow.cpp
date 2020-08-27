@@ -29,7 +29,7 @@ Variable SoftWindow::computeSingleStepWindow(
   int cidx = getCenter(step, inputSteps);
 
   auto maskArray = af::range(af::dim4(inputSteps));
-  maskArray = exp(-pow(maskArray - cidx, 2) / (2 * std_ * std_));
+  maskArray = -pow(maskArray - cidx, 2) / (2 * std_ * std_);
 
   // [1, inputSteps, batchSize]
   auto mask = Variable(
@@ -39,7 +39,7 @@ Variable SoftWindow::computeSingleStepWindow(
 }
 
 Variable
-SoftWindow::computeWindowMask(int targetLen, int inputSteps, int batchSize) {
+SoftWindow::computeWindowMask(int targetLen, int inputSteps, int batchSize, const af::array& inputProportions, const af::array& targetSizes) {
   std::vector<int> centerVec(targetLen, 0);
   for (int u = 0; u < targetLen; ++u) {
     centerVec[u] = getCenter(u, inputSteps);
@@ -49,7 +49,7 @@ SoftWindow::computeWindowMask(int targetLen, int inputSteps, int batchSize) {
   ts = af::tile(af::moddims(ts, {1, inputSteps}), {targetLen, 1});
   auto centers =
       af::tile(af::array(targetLen, 1, centerVec.data()), {1, inputSteps});
-  auto maskArray = exp(-pow(ts - centers, 2) / (2 * std_ * std_));
+  auto maskArray = -pow(ts - centers, 2) / (2 * std_ * std_);
 
   // [targetLen, inputSteps, batchSize]
   auto mask = Variable(tile(maskArray, {1, 1, batchSize}), false);

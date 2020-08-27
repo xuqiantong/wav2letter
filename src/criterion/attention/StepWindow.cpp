@@ -36,13 +36,13 @@ Variable StepWindow::computeSingleStepWindow(
   maskarray(af::span, af::seq(start_idx, end_idx - 1)) = 1.0;
 
   // [1, inputSteps, batchSize]
-  auto mask = Variable(tile(maskarray, {1, 1, batchSize}), false);
+  auto mask = Variable(tile(af::log(maskarray), {1, 1, batchSize}), false);
 
   return mask;
 }
 
 Variable
-StepWindow::computeWindowMask(int targetLen, int inputSteps, int batchSize) {
+StepWindow::computeWindowMask(int targetLen, int inputSteps, int batchSize, const af::array& inputProportions, const af::array& targetSizes) {
   std::vector<Variable> maskvec(targetLen, Variable());
   for (int u = 0; u < targetLen; ++u) {
     maskvec[u] = computeSingleStepWindow(

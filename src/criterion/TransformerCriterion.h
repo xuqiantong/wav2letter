@@ -51,20 +51,25 @@ class TransformerCriterion : public SequenceCriterion {
   std::vector<fl::Variable> forward(
       const std::vector<fl::Variable>& inputs) override;
 
-  af::array viterbiPath(const af::array& input) override;
+  af::array viterbiPath(const af::array& input, const fl::Variable& inputProportions) override;
 
   std::pair<af::array, fl::Variable> viterbiPathBase(
       const af::array& input,
+      const fl::Variable& inputProportions,
       bool saveAttn);
 
   std::pair<fl::Variable, fl::Variable> vectorizedDecoder(
       const fl::Variable& input,
-      const fl::Variable& target);
+      const fl::Variable& target,
+      const fl::Variable& inputProportions,
+      const af::array& targetSizes);
 
   std::pair<fl::Variable, TS2SState> decodeStep(
       const fl::Variable& xEncoded,
       const fl::Variable& y,
-      const TS2SState& inState) const;
+      const TS2SState& inState,
+      const fl::Variable& inputProportions
+      ) const;
 
   std::pair<std::vector<std::vector<float>>, std::vector<TS2SStatePtr>>
   decodeBatchStep(

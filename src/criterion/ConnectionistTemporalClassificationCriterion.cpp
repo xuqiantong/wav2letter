@@ -48,7 +48,7 @@ ConnectionistTemporalClassificationCriterion::
     : scaleMode_(scalemode) {}
 
 af::array ConnectionistTemporalClassificationCriterion::viterbiPath(
-    const af::array& input) {
+    const af::array& input, const fl::Variable& inputProportions) {
   af::array bestpath, maxvalues;
   af::max(maxvalues, bestpath, input, 0);
   return af::moddims(bestpath, bestpath.dims(1), bestpath.dims(2));

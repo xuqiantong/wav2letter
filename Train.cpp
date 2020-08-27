@@ -282,8 +282,8 @@ int main(int argc, char** argv) {
         criterionDummy, 
         netoptimDummy, 
         critoptimDummy, 
-        plGeneratorDummy);
-      nSWAModels = 17913;
+        plGeneratorDummy,
+        nSWAModels);
       for (size_t i = 0; i < networkDummy->params().size(); ++i) {
         swaNetworkParams.push_back(networkDummy->params()[i].array());
         swaNetworkParams[i].eval();
@@ -515,12 +515,14 @@ int main(int argc, char** argv) {
   auto evalOutput = [&dicts, &criterion](
                         const af::array& op,
                         const af::array& target,
+                        const af::array& inputProportions,
                         DatasetMeters& mtr) {
     auto batchsz = op.dims(2);
     for (int b = 0; b < batchsz; ++b) {
       auto tgt = target(af::span, b);
+      fl::Variable proportion = fl::input(inputProportions.row(b));
       auto viterbipath =
-          afToVector<int>(criterion->viterbiPath(op(af::span, af::span, b)));
+          afToVector<int>(criterion->viterbiPath(op(af::span, af::span, b), proportion));
       auto tgtraw = afToVector<int>(tgt);
 
       // Remove `-1`s appended to the target for batching (if any)
@@ -559,12 +561,33 @@ int main(int argc, char** argv) {
       if (batch[kInputIdx].isempty()) {
         continue;
       }
-      auto output = ntwrk->forward({fl::input(batch[kInputIdx])}).front();
+      af::array padMask;
+      // T F 1 B
+      if (FLAGS_fixed_transformer) {
+        int T = batch[kInputIdx].dims(0), B = batch[kInputIdx].dims(3);
+        af::array inputNotPaddedSize = af::moddims(
+          af::ceil(batch[kInputProportions] * T), af::dim4(1, B)); 
+        padMask = af::iota(
+          af::dim4(T, 1), af::dim4(1, B)) < af::tile(inputNotPaddedSize, T, 1); 
+      }
+      auto nn = std::dynamic_pointer_cast<fl::Sequential>(ntwrk);
+      auto output = fl::input(batch[kInputIdx]);
+      for (auto& module : nn->modules()) {
+        auto tr = std::dynamic_pointer_cast<fl::Transformer>(module);
+        if (tr != nullptr) {
+          output = module->forward({output, fl::noGrad(padMask)}).front();
+        } else {
+          output = module->forward({output}).front();
+        }
+      }
       auto loss =
-          crit->forward({output, fl::Variable(batch[kTargetIdx], false)})
+          crit->forward({
+            output, 
+            fl::Variable(batch[kTargetIdx], false), 
+            fl::noGrad(batch[kInputProportions])})
               .front();
       mtrs.loss.add(loss.array());
-      evalOutput(output.array(), batch[kTargetIdx], mtrs);
+      evalOutput(output.array(), batch[kTargetIdx], batch[kInputProportions], mtrs);
     }
   };
 
@@ -736,11 +759,36 @@ int main(int argc, char** argv) {
             curBatch >= FLAGS_saug_start_update) {
           input = saug->forward(input);
         }
-        auto output = ntwrk->forward({input}).front();
+        // auto output = ntwrk->forward({input}).front();
+        af::array padMask;
+        // T F 1 B
+        if (FLAGS_fixed_transformer) {
+          af::print("proportions", batch[kInputProportions]);
+          int T = batch[kInputIdx].dims(0), B = batch[kInputIdx].dims(3);
+          af::array inputNotPaddedSize = af::moddims(
+            af::ceil(batch[kInputProportions] * T), af::dim4(1, B)); 
+          padMask = af::iota(
+            af::dim4(T, 1), af::dim4(1, B)) < af::tile(inputNotPaddedSize, T, 1); 
+          af::print("padMask init", padMask);
+        }
+        
+        auto nn = std::dynamic_pointer_cast<fl::Sequential>(ntwrk);
+        auto output = input;
+        for (auto& module : nn->modules()) {
+          auto tr = std::dynamic_pointer_cast<fl::Transformer>(module);
+          if (tr != nullptr) {
+            output = module->forward({output, fl::noGrad(padMask)}).front();
+          } else {
+            output = module->forward({output}).front();
+          }
+        }
         af::sync();
         meters.critfwdtimer.resume();
         auto loss =
-            crit->forward({output, fl::noGrad(batch[kTargetIdx])}).front();
+            crit->forward({
+              output, 
+              fl::noGrad(batch[kTargetIdx]), 
+              fl::noGrad(batch[kInputProportions])}).front();
         af::sync();
         meters.fwdtimer.stopAndIncUnit();
         meters.critfwdtimer.stopAndIncUnit();
@@ -754,7 +802,7 @@ int main(int argc, char** argv) {
         int64_t batchIdx = (curBatch - startUpdate - 1) % trainset->size();
         int64_t globalBatchIdx = trainset->getGlobalBatchIdx(batchIdx);
         if (trainEvalIds.find(globalBatchIdx) != trainEvalIds.end()) {
-          evalOutput(output.array(), batch[kTargetIdx], meters.train);
+          evalOutput(output.array(), batch[kTargetIdx], batch[kInputProportions], meters.train);
         }
 
         // backward
@@ -803,14 +851,21 @@ int main(int argc, char** argv) {
         meters.sampletimer.resume();
 
         if (FLAGS_start_swa) {
+          auto swaFunction = [](af::array& avgParam, af::array& newParam, int n) {
+            if (FLAGS_start_swa_type == "avr") {
+              return (avgParam * n + newParam) / (n + 1);
+            } else if (FLAGS_start_swa_type == "ema") {
+              float decay = 0.9999;
+              return avgParam * decay + newParam * (1 - decay);
+            }
+          };
+          
           for (size_t i = 0; i < ntwrk->params().size(); ++i) {
-            swaNetworkParams[i] = (swaNetworkParams[i] * nSWAModels + ntwrk->params()[i].array()) /
-                (nSWAModels + 1);
-            swaNetworkParams[i].eval();
+          swaNetworkParams[i] = swaFunction(swaNetworkParams[i], ntwrk->params()[i].array(), nSWAModels);
+          swaNetworkParams[i].eval();
           }
           for (size_t i = 0; i < crit->params().size(); ++i) {
-            swaCriterionParams[i] = (swaCriterionParams[i] * nSWAModels + crit->params()[i].array()) /
-                (nSWAModels + 1);
+            swaCriterionParams[i] = swaFunction(swaNetworkParams[i], crit->params()[i].array(), nSWAModels);
             swaCriterionParams[i].eval();
           }
           nSWAModels++;

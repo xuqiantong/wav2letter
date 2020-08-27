@@ -210,7 +210,7 @@ Seq2SeqCriterion::Seq2SeqCriterion(
 
 std::vector<Variable> Seq2SeqCriterion::forward(
     const std::vector<Variable>& inputs) {
-  if (inputs.size() != 2) {
+  if (inputs.size() < 2) {
     throw std::invalid_argument("Invalid inputs size");
   }
   const auto& input = inputs[0];
@@ -277,7 +277,8 @@ std::pair<Variable, Variable> Seq2SeqCriterion::vectorizedDecoder(
 
     Variable windowWeight;
     if (window_ && (!train_ || trainWithWindow_)) {
-      windowWeight = window_->computeWindowMask(U, T, B);
+      af::array fake1, fake2;
+      windowWeight = window_->computeWindowMask(U, T, B, fake1, fake2);
     }
 
     std::tie(alpha, summaries) = attention(i)->forward(
@@ -341,7 +342,7 @@ std::pair<Variable, Variable> Seq2SeqCriterion::decoder(
   return std::make_pair(out, alpha);
 }
 
-af::array Seq2SeqCriterion::viterbiPath(const af::array& input) {
+af::array Seq2SeqCriterion::viterbiPath(const af::array& input, const fl::Variable& inputProportions) {
   return viterbiPathBase(input, false).first;
 }
 

@@ -38,7 +38,7 @@ class AttentionBase : public fl::Container {
       const fl::Variable& state,
       const fl::Variable& xEncoded,
       const fl::Variable& prevAttn) {
-    return forward(state, xEncoded, prevAttn, fl::Variable() /* attnWeight */);
+    return forward(state, xEncoded, prevAttn, fl::Variable() /* attnWeight */, fl::Variable());
   }
 
   std::pair<fl::Variable, fl::Variable> operator()(
@@ -46,14 +46,23 @@ class AttentionBase : public fl::Container {
       const fl::Variable& xEncoded,
       const fl::Variable& prevAttn,
       const fl::Variable& attnWeight) {
-    return forward(state, xEncoded, prevAttn, attnWeight);
+    return forward(state, xEncoded, prevAttn, attnWeight, fl::Variable());
   }
 
   virtual std::pair<fl::Variable, fl::Variable> forward(
       const fl::Variable& state,
       const fl::Variable& xEncoded,
       const fl::Variable& prevAttn,
-      const fl::Variable& attnWeight) = 0;
+      const fl::Variable& attnWeight) {
+      return forward(state, xEncoded, prevAttn, attnWeight, fl::Variable());
+  }
+  
+  virtual std::pair<fl::Variable, fl::Variable> forward(
+      const fl::Variable& state,
+      const fl::Variable& xEncoded,
+      const fl::Variable& prevAttn,
+      const fl::Variable& attnWeight,
+      const fl::Variable& inputProportions) = 0;
 
  private:
   FL_SAVE_LOAD_WITH_BASE(fl::Container)

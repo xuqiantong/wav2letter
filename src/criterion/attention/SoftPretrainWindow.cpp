@@ -7,6 +7,7 @@
  */
 
 #include "criterion/attention/SoftPretrainWindow.h"
+#include "common/Defines.h"
 
 using namespace fl;
 
@@ -23,7 +24,7 @@ Variable SoftPretrainWindow::computeSingleStepWindow(
     int step) {
   auto ts = af::range(af::dim4(1, inputSteps), 1);
   double vratio = (double)inputSteps / (double)targetLen_;
-  auto maskArray = exp(-pow(ts - vratio * step, 2) / (2 * std_ * std_));
+  auto maskArray = -pow(ts - vratio * step, 2) / (2 * std_ * std_);
 
   // [1, inputSteps, batchSize]
   return Variable(tile(maskArray, {1, 1, batchSize}), false);
@@ -32,14 +33,24 @@ Variable SoftPretrainWindow::computeSingleStepWindow(
 Variable SoftPretrainWindow::computeWindowMask(
     int targetLen,
     int inputSteps,
-    int batchSize) {
+    int batchSize, 
+    const af::array& inputProportions, 
+    const af::array& targetSizes) {
   auto ts = af::range(af::dim4(targetLen, inputSteps), 1);
   auto us = af::range(af::dim4(targetLen, inputSteps));
-  double vratio = (double)inputSteps / (double)targetLen;
-  auto maskArray = exp(-pow(ts - vratio * us, 2) / (2 * std_ * std_));
+  ts = af::tile(ts, 1, 1, batchSize);
+  us = af::tile(us, 1, 1, batchSize);
+  auto vratio = af::constant((double)inputSteps / (double)targetLen, af::dim4(targetLen, inputSteps, batchSize));
+  if (!inputProportions.isempty() > 0 && FLAGS_attention_mask2) {
+    af::array inputNotPaddedSize = af::ceil(inputProportions * inputSteps);
+    vratio = af::moddims(inputNotPaddedSize / targetSizes, af::dim4(1, 1, batchSize));
+    vratio = af::tile(vratio, targetLen, inputSteps);
+  }
+  
+  auto maskArray = -pow(ts - vratio * us, 2) / (2 * std_ * std_);
 
   // [targetLen, inputSteps, batchSize]
-  return Variable(tile(maskArray, {1, 1, batchSize}), false);
+  return Variable(maskArray, false);
 }
 
 } // namespace w2l

@@ -73,7 +73,8 @@ constexpr size_t kInputIdx = 0;
 constexpr size_t kTargetIdx = 1;
 constexpr size_t kWordIdx = 2;
 constexpr size_t kSampleIdx = 3;
-constexpr size_t kNumDataIdx = 4; // total number of dataset indices
+constexpr size_t kInputProportions = 4;
+constexpr size_t kNumDataIdx = 5; // total number of dataset indices
 
 // Various constants used in w2l
 constexpr const char* kTrainMode = "train";
@@ -334,11 +335,19 @@ DECLARE_int64(decoder_length_delta);
 DECLARE_string(decoder_length_model);
 DECLARE_int64(input_rand_shift);
 DECLARE_bool(start_swa);
+DECLARE_string(start_swa_type);
 DECLARE_string(start_swa_model);
 DECLARE_bool(epoch_reduce);
 DECLARE_bool(mydebug);
 DECLARE_bool(padfix);
+DECLARE_bool(padfix2);
 DECLARE_bool(raw_wave);
+DECLARE_bool(attention_mask);
+DECLARE_bool(attention_mask2);
+DECLARE_bool(use_new_batching);
+DECLARE_bool(use_new_batching_random);
+DECLARE_bool(padfixnorm);
+DECLARE_bool(fixed_transformer);
 
 /* ========== FB SPECIFIC ========== */
 DECLARE_string(target);

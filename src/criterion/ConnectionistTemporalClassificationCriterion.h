@@ -22,7 +22,7 @@ class ConnectionistTemporalClassificationCriterion : public SequenceCriterion {
   std::vector<fl::Variable> forward(
       const std::vector<fl::Variable>& inputs) override;
 
-  af::array viterbiPath(const af::array& input) override;
+  af::array viterbiPath(const af::array& input, const fl::Variable& inputProportions) override;
   af::array viterbiPath(const af::array& input, const af::array& target)
       override;
 

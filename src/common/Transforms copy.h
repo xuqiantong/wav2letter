@@ -33,7 +33,7 @@ template <class T>
 void remapLabels(std::vector<T>& labels, const Dictionary& dict) {
   if (FLAGS_eostoken) {
     int eosidx = dict.getIndex(kEosToken);
-    while (!labels.empty() && (labels.back() == eosidx || labels.back() == eosidx + 1)) {
+    while (!labels.empty() && labels.back() == eosidx) {
       labels.pop_back();
     }
   }
@@ -131,33 +131,6 @@ std::vector<T> localNormalize(
 template <typename T>
 std::vector<T> normalize(
     const std::vector<T>& in,
-    int64_t batchSz = 1,
-    double threshold = 0.0) {
-  if (in.empty()) {
-    return {};
-  }
-  auto out(in);
-  int64_t perBatchSz = out.size() / batchSz;
-  for (size_t b = 0; b < batchSz; ++b) {
-    auto start = out.begin() + b * perBatchSz;
-    T sum = std::accumulate(start, start + perBatchSz, 0.0);
-    T mean = sum / perBatchSz;
-    std::transform(
-        start, start + perBatchSz, start, [mean](T x) { return x - mean; });
-    T sq_sum = std::inner_product(start, start + perBatchSz, start, 0.0);
-    T stddev = std::sqrt(sq_sum / perBatchSz);
-    if (stddev > threshold) {
-      std::transform(start, start + perBatchSz, start, [stddev](T x) {
-        return x / stddev;
-      });
-    }
-  }
-  return out;
-}
-
-template <typename T>
-std::vector<T> normalizeWithSize(
-    const std::vector<T>& in,
     const std::vector<int>& inSizes,
     int64_t batchSz = 1,
     double threshold = 0.0) {
@@ -182,5 +155,4 @@ std::vector<T> normalizeWithSize(
   }
   return out;
 }
-
 } // namespace w2l

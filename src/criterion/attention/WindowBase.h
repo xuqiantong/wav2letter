@@ -23,7 +23,7 @@ class WindowBase {
       int step) = 0;
 
   virtual fl::Variable
-  computeWindowMask(int targetLen, int inputSteps, int batchSize) = 0;
+  computeWindowMask(int targetLen, int inputSteps, int batchSize, const af::array& inputProportions, const af::array& targetSizes) = 0;
 
   virtual ~WindowBase() {}
 

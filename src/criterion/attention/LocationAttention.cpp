@@ -24,7 +24,8 @@ std::pair<Variable, Variable> SimpleLocationAttention::forward(
     const Variable& state,
     const Variable& xEncoded,
     const Variable& prevAttn,
-    const Variable& attnWeight) {
+    const Variable& attnWeight,
+    const Variable& ) {
   int U = state.dims(1);
   if (U > 1) {
     throw std::invalid_argument(
@@ -45,7 +46,7 @@ std::pair<Variable, Variable> SimpleLocationAttention::forward(
   }
 
   if (!attnWeight.isempty()) {
-    innerProd = innerProd + log(attnWeight);
+    innerProd = innerProd + attnWeight;
   }
 
   // [1, seqlen, batchsize]
@@ -73,7 +74,8 @@ std::pair<Variable, Variable> LocationAttention::forward(
     const Variable& state,
     const Variable& xEncoded,
     const Variable& prevAttn,
-    const Variable& attnWeight) {
+    const Variable& attnWeight,
+    const Variable& ) {
   int U = state.dims(1);
   if (U > 1) {
     throw std::invalid_argument(
@@ -94,7 +96,7 @@ std::pair<Variable, Variable> LocationAttention::forward(
   }
 
   if (!attnWeight.isempty()) {
-    innerProd = innerProd + log(attnWeight);
+    innerProd = innerProd + attnWeight;
   }
 
   // [1, seqlen, batchsize]
@@ -130,7 +132,8 @@ std::pair<Variable, Variable> NeuralLocationAttention::forward(
     const Variable& state,
     const Variable& xEncoded,
     const Variable& prevAttn,
-    const Variable& attnWeight) {
+    const Variable& attnWeight,
+    const Variable& ) {
   int U = state.dims(1);
   if (U > 1) {
     throw std::invalid_argument(
@@ -155,7 +158,7 @@ std::pair<Variable, Variable> NeuralLocationAttention::forward(
   auto nnOut = module(4)->forward({hidden}).front();
 
   if (!attnWeight.isempty()) {
-    nnOut = nnOut + log(attnWeight);
+    nnOut = nnOut + attnWeight;
   }
 
   // [1, seqlen, batchsize]

@@ -78,7 +78,7 @@ class Seq2SeqCriterion : public SequenceCriterion {
       const fl::Variable& input,
       const fl::Variable& target);
 
-  af::array viterbiPath(const af::array& input) override;
+  af::array viterbiPath(const af::array& input, const fl::Variable& inputProportions) override;
 
   std::pair<af::array, fl::Variable> viterbiPathBase(
       const af::array& input,
