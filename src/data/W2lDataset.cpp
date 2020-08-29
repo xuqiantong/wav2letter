@@ -213,7 +213,7 @@ std::vector<std::vector<int64_t>> RoundRobinBatchPackerRandomSamples::getBatches
     for (auto i = nSamples; i >= 1; --i) {
       std::swap(samplesIndices[i - 1], samplesIndices[rngSamples() % nSamples]);
     }
-    if (shuffle_) {
+    if (!shuffle_) {
       // sort only nBatchedSamples which we will use in current epoch, remain part is unused
       std::sort(samplesIndices.begin(), samplesIndices.begin() + nBatchedSamples);
     }

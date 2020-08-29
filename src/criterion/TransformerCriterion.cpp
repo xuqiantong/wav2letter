@@ -345,24 +345,24 @@ TransformerCriterion::decodeBatchStep(
   }
 
   Variable outStateBatched;
+  af::array padMask; // no mask because we are doing step by step decoding here
   for (int i = 0; i < nLayer_; i++) {
     if (inStates[0]->step == 0) {
       for (int j = 0; j < B; j++) {
         outstates[j]->hidden.push_back(yBatched.slice(j));
       }
-      yBatched = layer(i)->forward(std::vector<Variable>({yBatched})).front();
+      yBatched = layer(i)->forward(std::vector<Variable>({yBatched, fl::noGrad(padMask)})).front();
     } else {
       std::vector<Variable> statesVector(B);
       for (int j = 0; j < B; j++) {
         statesVector[j] = inStates[j]->hidden[i];
       }
       Variable inStateHiddenBatched = concatenate(statesVector, 2);
-      auto tmp = std::vector<Variable>({inStateHiddenBatched, yBatched});
-      auto tmp2 = concatenate(tmp, 1);
+      auto tmp = concatenate({inStateHiddenBatched, yBatched}, 1);
       for (int j = 0; j < B; j++) {
-        outstates[j]->hidden.push_back(tmp2.slice(j));
+        outstates[j]->hidden.push_back(tmp.slice(j));
       }
-      yBatched = layer(i)->forward(tmp).front();
+      yBatched = layer(i)->forward({inStateHiddenBatched, yBatched, fl::noGrad(padMask)}).front();
     }
   }
 

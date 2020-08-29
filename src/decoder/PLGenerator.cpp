@@ -972,7 +972,17 @@ std::vector<BeamElement> PLGenerator::generateBeam(
         FLAGS_saug_tmaskn);
     flInput = saug->forward(flInput);
   }
-  auto rawEmission = ntwrk->forward({flInput}).front();
+  auto nn = std::dynamic_pointer_cast<fl::Sequential>(ntwrk);
+  af::array padMask;
+  auto rawEmission = flInput;
+  for (auto& module : nn->modules()) {
+    auto tr = std::dynamic_pointer_cast<fl::Transformer>(module);
+    if (tr != nullptr) {
+      rawEmission = module->forward({rawEmission, fl::noGrad(padMask)}).front();
+    } else {
+      rawEmission = module->forward({rawEmission}).front();
+    }
+  }
   auto emission = afToVector<float>(rawEmission);
   int N = rawEmission.dims(0);
   int T = rawEmission.dims(1);
