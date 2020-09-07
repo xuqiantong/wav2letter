@@ -865,7 +865,7 @@ int main(int argc, char** argv) {
           swaNetworkParams[i].eval();
           }
           for (size_t i = 0; i < crit->params().size(); ++i) {
-            swaCriterionParams[i] = swaFunction(swaNetworkParams[i], crit->params()[i].array(), nSWAModels);
+            swaCriterionParams[i] = swaFunction(swaCriterionParams[i], crit->params()[i].array(), nSWAModels);
             swaCriterionParams[i].eval();
           }
           nSWAModels++;
