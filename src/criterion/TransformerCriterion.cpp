@@ -292,7 +292,6 @@ std::pair<Variable, TS2SState> TransformerCriterion::decodeStep(
   af::array padMask; // no mask because we are doing step by step decoding here
   for (int i = 0; i < nLayer_; i++) {
     if (inState.step == 0) {
-      std::cout << " decoder step 0" << std::endl;
       outState.hidden.push_back(hy);
       hy = layer(i)->forward(std::vector<Variable>({hy, fl::noGrad(padMask)})).front();
     } else {

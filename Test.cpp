@@ -262,8 +262,27 @@ int main(int argc, char** argv) {
       // auto out2 = fl::reorder(fl::reorder(inp, 3, 0, 1, 2).row(1), 1, 2, 3, 0);
       // out2 = localNetwork->forward({out2}).front();
       // auto rawEmissionBatch = fl::concatenate({out1, out2}, 2);
-      auto rawEmissionBatch =
-          localNetwork->forward({fl::input(sample[kInputIdx])}).front();
+      af::array padMask;
+      if (FLAGS_fixed_transformer) {
+          int T = sample[kInputIdx].dims(0), B = sample[kInputIdx].dims(3);
+          af::array inputNotPaddedSize = af::moddims(
+            af::ceil(sample[kInputProportions] * T), af::dim4(1, B)); 
+          padMask = af::iota(
+            af::dim4(T, 1), af::dim4(1, B)) < af::tile(inputNotPaddedSize, T, 1); 
+        }
+
+      auto nn = std::dynamic_pointer_cast<fl::Sequential>(localNetwork);
+        auto rawEmissionBatch = fl::input(sample[kInputIdx]);
+        for (auto& module : nn->modules()) {
+          auto tr = std::dynamic_pointer_cast<fl::Transformer>(module);
+          if (tr != nullptr) {
+            rawEmissionBatch = module->forward({rawEmissionBatch, fl::noGrad(padMask)}).front();
+          } else {
+            rawEmissionBatch = module->forward({rawEmissionBatch}).front();
+          }
+        }
+      // auto rawEmissionBatch =
+      //     localNetwork->forward({fl::input(sample[kInputIdx])}).front();
       // N T B
       // af::print("min pred", af::min(rawEmissionBatch.array(), 0));
       // af::print("max pred", af::max(rawEmissionBatch.array(), 0));

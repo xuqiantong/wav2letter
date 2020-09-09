@@ -763,13 +763,11 @@ int main(int argc, char** argv) {
         af::array padMask;
         // T F 1 B
         if (FLAGS_fixed_transformer) {
-          af::print("proportions", batch[kInputProportions]);
           int T = batch[kInputIdx].dims(0), B = batch[kInputIdx].dims(3);
           af::array inputNotPaddedSize = af::moddims(
             af::ceil(batch[kInputProportions] * T), af::dim4(1, B)); 
           padMask = af::iota(
             af::dim4(T, 1), af::dim4(1, B)) < af::tile(inputNotPaddedSize, T, 1); 
-          af::print("padMask init", padMask);
         }
         
         auto nn = std::dynamic_pointer_cast<fl::Sequential>(ntwrk);
