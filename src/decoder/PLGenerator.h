@@ -102,7 +102,7 @@ class PLGenerator {
   double currentModelWER_;
 
   std::vector<std::string> plEpochVec_;
-  std::unordered_map<int, std::pair<int, bool>> plUpdateMap_;
+  std::unordered_map<int, std::pair<int, float>> plUpdateMap_;
   std::vector<std::string> unsupFiles_;
 
   std::shared_ptr<fl::Module> rsLm_;

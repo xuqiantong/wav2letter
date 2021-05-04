@@ -304,6 +304,7 @@ DECLARE_string(rndv_filepath);
 DECLARE_string(train_unsup);
 DECLARE_string(pl_epoch);
 DECLARE_string(decoder_sweep_epoch);
+DECLARE_string(lmweight_schedule);
 DECLARE_string(n_pl_file);
 DECLARE_string(lmweight_range);
 DECLARE_string(wordscore_range);

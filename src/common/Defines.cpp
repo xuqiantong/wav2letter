@@ -336,7 +336,11 @@ DEFINE_string(
 DEFINE_string(
     decoder_sweep_epoch,
     "100000",
-    "comma-separated list of epoch to regenerate run decoder sweep");
+    "comma-separated list of epoch to regenerate run decoder sweep");  
+DEFINE_string(
+    lmweight_schedule,
+    "100000",
+    "comma-separated list of lmweights");
 DEFINE_string(
     pl_epoch,
     "100000",

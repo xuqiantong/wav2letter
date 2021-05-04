@@ -84,18 +84,23 @@ PLGenerator::PLGenerator(
   plEpochVec_ = split(',', FLAGS_pl_epoch, true);
   auto nPlFileVec = split(',', FLAGS_n_pl_file, true);
   auto decoderSweepEpochVec = split(',', FLAGS_decoder_sweep_epoch, true);
+  auto lmweightScheduleVec = split(',', FLAGS_lmweight_schedule, true);
   if (plEpochVec_.size() != nPlFileVec.size()) {
     LOG(FATAL) << "plEpochVec wtf?";
   }
+  if (decoderSweepEpochVec.size() != lmweightScheduleVec.size()) {
+    LOG(FATAL) << "lmweightScheduleVec wtf?";
+  }
   for (int i = 0; i < plEpochVec_.size(); i++) {
-    plUpdateMap_[stoi(plEpochVec_[i])] = {stoi(nPlFileVec[i]), false};
+    plUpdateMap_[stoi(plEpochVec_[i])] = {stoi(nPlFileVec[i]), -1.};
   }
   for (int i = 0; i < decoderSweepEpochVec.size(); i++) {
     int epoch = stoi(decoderSweepEpochVec[i]);
+    float lmweight = stof(lmweightScheduleVec[i]);
     if (plUpdateMap_.find(epoch) == plUpdateMap_.end()) {
       LOG(FATAL) << "decoderSweepEpochVec wtf?";
     }
-    plUpdateMap_[epoch].second = true;
+    plUpdateMap_[epoch].second = lmweight;
   }
   LOG_MASTER(INFO) << "---plUpdateMap";
   for (const auto& item : plUpdateMap_) {
@@ -329,10 +334,10 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
   if (worldRank_ == 0) {
     LOG_MASTER(INFO) << "bestLmWeight_ " << bestLmWeight_;
     LOG_MASTER(INFO) << "decoding sweep = "
-                     << ((plUpdateMap_[curEpoch].second || bestLmWeight_ < 0)
+                     << ((plUpdateMap_[curEpoch].second > 0 || bestLmWeight_ < 0)
                              ? "true"
                              : "false");
-    if (plUpdateMap_[curEpoch].second || bestLmWeight_ < 0) {
+    if (plUpdateMap_[curEpoch].second > 0 || bestLmWeight_ < 0) {
       ntwrk->eval();
       auto ds = createDataset(firstValidSet.second, dicts, lexicon_, 1, 0, 1);
 
@@ -344,7 +349,8 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
       generateRandomWeights();
       float bestWer = 1e10;
       for (int i = 0; i < FLAGS_nthread_decoder; i++) {
-        auto lmw = lmweightList_[i];
+        // auto lmw = lmweightList_[i];
+        auto lmw = plUpdateMap_[curEpoch].second;
         auto ws = wordscoreList_[i];
 
         float sum = 0, weight = 0;
@@ -424,7 +430,7 @@ std::shared_ptr<W2lDataset> PLGenerator::regenratePL(
     }
 
     // 3.3 load decoder parameters
-    if (plUpdateMap_[curEpoch].second || bestLmWeight_ < 0) {
+    if (plUpdateMap_[curEpoch].second > 0 || bestLmWeight_ < 0) {
       while (!fileExists(paramPath)) {
         sleep(5);
       }
